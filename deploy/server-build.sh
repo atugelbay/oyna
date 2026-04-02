@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export NODE_ENV=production
-
+# Не ставить NODE_ENV=production до npm ci: иначе npm не ставит devDependencies,
+# и пропадут @nestjs/cli / typescript / prisma CLI → nest: not found, next build падает.
 echo "==> OYNA deploy from $ROOT"
 
 if ! command -v node >/dev/null 2>&1; then

@@ -140,3 +140,4 @@ sudo certbot --nginx -d crm.example.com -d api.example.com
 - **CORS error:** проверьте `CORS_ORIGINS` и точное совпадение схемы/домена с адресом в браузере.
 - **Фронт бьёт не в тот API:** `NEXT_PUBLIC_*` вшиваются при `next build` — после смены URL пересоберите фронт.
 - **502 от nginx:** `pm2 status`, логи `pm2 logs oyna-api`, `pm2 logs oyna-web`.
+- **`nest: not found` при сборке:** на сервере перед `npm ci` не должно быть `NODE_ENV=production` (в актуальном `server-build.sh` это учтено). Иначе не ставятся devDependencies с Nest CLI и TypeScript.
