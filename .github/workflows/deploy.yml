@@ -1,0 +1,39 @@
+# Деплой на VPS по push в main (или вручную: Actions → Deploy to VPS → Run workflow).
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   VPS_HOST       — IP или домен сервера
+#   VPS_USER       — SSH-пользователь (например deploy или ubuntu)
+#   VPS_SSH_KEY    — приватный ключ (весь PEM, включая BEGIN/END)
+#   VPS_DEPLOY_PATH — абсолютный путь к клону репозитория, например /var/www/oyna
+
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH — pull и сборка на сервере
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.VPS_DEPLOY_PATH }}"
+            git fetch origin
+            git checkout main
+            git reset --hard origin/main
+            chmod +x deploy/server-build.sh
+            bash deploy/server-build.sh

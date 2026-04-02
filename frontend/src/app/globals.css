@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #05080c;
+  color: #ffffff;
+}
+
+/* CRM: единый фон (шапка + колонка навигации), сверху #0A0F14; ниже — тот же градиент к светлому низу */
+.crm-app-shell {
+  min-height: 100vh;
+  background: linear-gradient(
+    180deg,
+    #0a0f14 0%,
+    #0a0f14 22%,
+    #0c1218 52%,
+    #121c28 78%,
+    #182433 100%
+  );
+}
+
+/* Контент страницы как «окно» поверх фона */
+.crm-main-panel {
+  background-color: #0c1218;
+  border: 1px solid rgba(46, 63, 79, 0.42);
+  border-radius: 24px 0 0 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2), -6px -4px 32px rgba(0, 0, 0, 0.28);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+input[type="date"]::-webkit-datetime-edit {
+  color: inherit;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #FFFFFF;
+  -webkit-box-shadow: 0 0 0px 1000px #141e2a inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* CRM-панели: тонкий скролл в тон UI */
+.crm-panel-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.35) rgba(31, 43, 56, 0.9);
+}
+
+.crm-panel-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.crm-panel-scroll::-webkit-scrollbar-track {
+  background: rgba(31, 43, 56, 0.95);
+  border-radius: 999px;
+}
+
+.crm-panel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+}
+
+.crm-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.55);
+}
+
+/* Выпадающий список игроков в модалке запуска комнаты — акцентный скролл */
+.launch-room-player-dropdown {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 229, 255, 0.5) rgba(20, 30, 40, 0.6);
+}
+
+.launch-room-player-dropdown::-webkit-scrollbar {
+  width: 5px;
+}
+
+.launch-room-player-dropdown::-webkit-scrollbar-track {
+  background: rgba(20, 30, 40, 0.5);
+  border-radius: 999px;
+}
+
+.launch-room-player-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 255, 0.45);
+  border-radius: 999px;
+}
+
+.launch-room-player-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 255, 0.65);
+}
