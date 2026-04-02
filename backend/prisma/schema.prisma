@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  OPERATOR
+  MANAGER
+  ADMIN
+}
+
+enum LoyaltyStatus {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum VenueStatus {
+  OPEN
+  CLOSED
+  MAINTENANCE
+}
+
+enum GameModeType {
+  COOP
+  COMPETITIVE
+  FFA
+}
+
+enum SessionStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  ERROR
+  CANCELLED
+}
+
+enum TransactionType {
+  PURCHASE
+  BONUS
+  PROMO
+  GAME_DEBIT
+  CORRECTION
+}
+
+enum TransactionSource {
+  CASHIER
+  ONLINE
+  ADMIN
+}
+
+enum TournamentStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum PromoStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+model User {
+  id            String        @id @default(uuid())
+  phone         String        @unique
+  nickname      String        @unique
+  name          String
+  birthDate     DateTime?
+  role          Role          @default(USER)
+  loyaltyStatus LoyaltyStatus @default(BRONZE)
+  totalScore    Int           @default(0)
+  isActive      Boolean       @default(true)
+  passwordHash  String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  balance            AccountBalance?
+  transactions       Transaction[]
+  scores             Score[]
+  sessions           GameSessionPlayer[]
+  tournamentMembers  TournamentMember[]
+  tournamentResults  TournamentResult[]
+  staffVenues        StaffVenue[]
+
+  @@index([phone])
+  @@index([nickname])
+  @@map("users")
+}
+
+model AccountBalance {
+  id               String @id @default(uuid())
+  userId           String @unique
+  availableSeconds Int    @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account_balances")
+}
+
+model Venue {
+  id       String      @id @default(uuid())
+  name     String
+  city     String
+  address  String
+  timezone String      @default("Asia/Almaty")
+  status   VenueStatus @default(OPEN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rooms          Room[]
+  transactions   Transaction[]
+  sessions       GameSession[]
+  tournaments    Tournament[]
+  promos         Promo[]
+  pricePackages  PricePackage[]
+  accessCodes    VenueAccessCode[]
+  staffVenues    StaffVenue[]
+
+  @@map("venues")
+}
+
+model StaffVenue {
+  id      String @id @default(uuid())
+  userId  String
+  venueId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, venueId])
+  @@map("staff_venues")
+}
+
+model Room {
+  id                   String @id @default(uuid())
+  venueId              String
+  name                 String
+  type                 String
+  maxPlayers           Int    @default(5)
+  defaultLevelDuration Int    @default(120)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  venue    Venue      @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  modes    GameMode[]
+  sessions GameSession[]
+  scores   Score[]
+
+  @@map("rooms")
+}
+
+model GameMode {
+  id          String       @id @default(uuid())
+  roomId      String
+  type        GameModeType @default(COOP)
+  name        String
+  description String?
+  config      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room     Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sessions GameSession[]
+  scores   Score[]
+
+  @@map("game_modes")
+}
+
+model Transaction {
+  id               String            @id @default(uuid())
+  userId           String
+  type             TransactionType
+  source           TransactionSource
+  amountTenge      Int               @default(0)
+  equivalentSeconds Int              @default(0)
+  venueId          String?
+  description      String?
+
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  venue Venue? @relation(fields: [venueId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+model GameSession {
+  id              String        @id @default(uuid())
+  roomId          String
+  modeId          String
+  venueId         String
+  sessionToken    String        @unique @default(uuid())
+  startTime       DateTime?
+  endTime         DateTime?
+  /** CRM «Пауза»: таймер заморожен, при возобновлении startTime сдвигается */
+  pausedAt        DateTime?
+  deductedSeconds Int           @default(0)
+  status          SessionStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+
+  room    Room              @relation(fields: [roomId], references: [id])
+  mode    GameMode          @relation(fields: [modeId], references: [id])
+  venue   Venue             @relation(fields: [venueId], references: [id])
+  players GameSessionPlayer[]
+  scores  Score[]
+
+  @@index([sessionToken])
+  @@index([status])
+  @@map("game_sessions")
+}
+
+model GameSessionPlayer {
+  id        String @id @default(uuid())
+  sessionId String
+  userId    String
+
+  session GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id])
+
+  @@unique([sessionId, userId])
+  @@map("game_session_players")
+}
+
+model Score {
+  id        String @id @default(uuid())
+  userId    String
+  sessionId String
+  roomId    String
+  modeId    String
+  score     Int
+
+  createdAt DateTime @default(now())
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  room    Room        @relation(fields: [roomId], references: [id])
+  mode    GameMode    @relation(fields: [modeId], references: [id])
+
+  @@index([userId])
+  @@index([roomId])
+  @@index([score])
+  @@index([createdAt])
+  @@map("scores")
+}
+
+// ─── Tournaments ─────────────────────────────────────────
+
+model Tournament {
+  id          String           @id @default(uuid())
+  name        String
+  description String?
+  venueId     String
+  dateStart   DateTime
+  dateEnd     DateTime
+  maxTeams    Int              @default(10)
+  status      TournamentStatus @default(UPCOMING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  venue   Venue              @relation(fields: [venueId], references: [id])
+  teams   TournamentTeam[]
+  results TournamentResult[]
+
+  @@index([venueId])
+  @@index([status])
+  @@map("tournaments")
+}
+
+model TournamentTeam {
+  id               String @id @default(uuid())
+  tournamentId     String
+  name             String
+  participantsCount Int   @default(0)
+
+  createdAt DateTime @default(now())
+
+  tournament Tournament         @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  members    TournamentMember[]
+  results    TournamentResult[]
+
+  @@map("tournament_teams")
+}
+
+model TournamentMember {
+  id        String  @id @default(uuid())
+  teamId    String
+  userId    String
+  isCaptain Boolean @default(false)
+
+  team TournamentTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@map("tournament_members")
+}
+
+model TournamentResult {
+  id           String  @id @default(uuid())
+  tournamentId String
+  teamId       String?
+  userId       String?
+  rank         Int
+  score        Int     @default(0)
+
+  tournament TournamentTeam? @relation(fields: [teamId], references: [id])
+  team       Tournament      @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User?           @relation(fields: [userId], references: [id])
+
+  @@map("tournament_results")
+}
+
+// ─── Promos ──────────────────────────────────────────────
+
+model Promo {
+  id          String      @id @default(uuid())
+  title       String
+  headline    String?
+  description String?
+  type        String
+  reward      String?
+  quantity    String?
+  dateStart   DateTime
+  dateEnd     DateTime?
+  status      PromoStatus @default(ACTIVE)
+  venueId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  venue Venue? @relation(fields: [venueId], references: [id])
+
+  @@index([status])
+  @@index([venueId])
+  @@map("promos")
+}
+
+// ─── Settings ────────────────────────────────────────────
+
+model PricePackage {
+  id        String @id @default(uuid())
+  venueId   String
+  name      String
+  minutes   Int
+  costTenge Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@map("price_packages")
+}
+
+model LoyaltyLevel {
+  id            String @id @default(uuid())
+  name          String @unique
+  minPoints     Int
+  bonusMinutes  Int    @default(0)
+  colorGradient String @default("")
+  colorBg       String @default("")
+  sortOrder     Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("loyalty_levels")
+}
+
+model RolePermission {
+  id            String  @id @default(uuid())
+  role          Role
+  permissionKey String
+  enabled       Boolean @default(true)
+
+  @@unique([role, permissionKey])
+  @@map("role_permissions")
+}
+
+model VenueAccessCode {
+  id      String @id @default(uuid())
+  venueId String
+  role    Role
+  code    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, role])
+  @@map("venue_access_codes")
+}
