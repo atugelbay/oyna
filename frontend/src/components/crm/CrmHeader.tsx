@@ -60,7 +60,7 @@ export function CrmHeader() {
 
   const venueLabel = venuesLoading
     ? "Загрузка..."
-    : selectedVenue?.name ?? venues[0]?.name ?? "Площадка";
+    : selectedVenue?.name ?? venues[0]?.name ?? "Нет филиалов";
 
   return (
     <header className="flex min-w-0 flex-1 items-center justify-end gap-4 py-2 overflow-visible">
