@@ -84,7 +84,7 @@ type OverviewData = {
   totalPlayers: number;
   newPlayers: number;
   totalSessions: number;
-  avgSessionMinutes: number;
+  totalSessionMinutes: number;
   bonusMinutesGiven: number;
   bonusSessionsGiven: number;
   popularRooms: { name: string; sessions: number }[];
@@ -342,9 +342,9 @@ export default function StatsPage() {
               <p className="mt-1 text-2xl font-bold tabular-nums text-text-primary">{overview?.totalSessions ?? 0}</p>
             </div>
             <div className="rounded-xl bg-bg-secondary p-4">
-              <p className="text-xs text-text-secondary">Общее среднее время сессии</p>
+              <p className="text-xs text-text-secondary">Суммарное время сессий</p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-text-primary">
-                {Math.round(overview?.avgSessionMinutes ?? 0)} мин
+                {Math.round(overview?.totalSessionMinutes ?? 0).toLocaleString("ru-RU")} мин
               </p>
             </div>
           </div>

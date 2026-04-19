@@ -16,6 +16,10 @@ import {
   UpdateEmployeeDto,
 } from './dto';
 import { normalizeKzPhone, isKzPhoneE164 } from '../common/utils/phone.util';
+import {
+  CRM_EXTRA_ROLE_SLOTS,
+  isCrmExtraRoleName,
+} from './crm-extra-roles.constants';
 
 /** Ключи прав CRM (порядок = порядок в UI). При отсутствии строки в БД считаем право включённым. */
 export const CRM_PERMISSION_KEYS: readonly string[] = [
@@ -27,11 +31,22 @@ export const CRM_PERMISSION_KEYS: readonly string[] = [
   'stats',
 ];
 
-const ROLES_UI_ORDER: Role[] = [
+const BASE_ROLES_UI_ORDER: Role[] = [
   Role.ADMIN,
   Role.MANAGER,
   Role.OPERATOR,
   Role.USER,
+];
+
+const ROLES_UI_ORDER: Role[] = [
+  ...BASE_ROLES_UI_ORDER,
+  ...CRM_EXTRA_ROLE_SLOTS,
+];
+
+const EMPLOYEE_ASSIGNABLE_ROLES: Role[] = [
+  Role.OPERATOR,
+  Role.MANAGER,
+  ...CRM_EXTRA_ROLE_SLOTS,
 ];
 
 @Injectable()
@@ -118,12 +133,24 @@ export class SettingsService {
   // ─── Roles & Permissions ─────────────────────────────────────
 
   async getRoles() {
-    const [permissions, accessCodes] = await Promise.all([
-      this.prisma.rolePermission.findMany(),
-      this.prisma.venueAccessCode.findMany(),
-    ]);
+    const [permissions, accessCodes, customLabels, provisionedExtras] =
+      await Promise.all([
+        this.prisma.rolePermission.findMany(),
+        this.prisma.venueAccessCode.findMany(),
+        this.prisma.roleCustomLabel.findMany(),
+        this.prisma.crmProvisionedRole.findMany({ select: { role: true } }),
+      ]);
+    const provisionedSet = new Set(provisionedExtras.map((p) => p.role));
+    const labelByRole = new Map(
+      customLabels.map((c) => [c.role, c.label] as const),
+    );
 
-    return ROLES_UI_ORDER.map((role) => {
+    const visibleRoles = ROLES_UI_ORDER.filter((role) => {
+      if (CRM_EXTRA_ROLE_SLOTS.includes(role)) return provisionedSet.has(role);
+      return true;
+    });
+
+    return visibleRoles.map((role) => {
       const rolePerms = permissions.filter((p) => p.role === role);
       const byKey = new Map(
         rolePerms.map((p) => [p.permissionKey, p.enabled] as const),
@@ -137,12 +164,111 @@ export class SettingsService {
       const accessCode = accessCodes.find((a) => a.role === role);
       return {
         role,
+        customLabel: labelByRole.get(role) ?? null,
         permissions: permissionsList,
         accessCode: accessCode
           ? { venueId: accessCode.venueId, code: accessCode.code }
           : undefined,
       };
     });
+  }
+
+  async createCrmRole(label: string) {
+    const trimmed = label.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Укажите название роли');
+    }
+
+    const used = await this.prisma.crmProvisionedRole.findMany({
+      select: { role: true },
+    });
+    const usedSet = new Set(used.map((u) => u.role));
+    const nextSlot = CRM_EXTRA_ROLE_SLOTS.find((r) => !usedSet.has(r));
+    if (!nextSlot) {
+      throw new BadRequestException(
+        'Достигнут лимит дополнительных ролей (5). Удалите неиспользуемую, чтобы добавить новую.',
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.crmProvisionedRole.create({ data: { role: nextSlot } }),
+      this.prisma.roleCustomLabel.create({
+        data: { role: nextSlot, label: trimmed },
+      }),
+      ...CRM_PERMISSION_KEYS.map((permissionKey) =>
+        this.prisma.rolePermission.upsert({
+          where: {
+            role_permissionKey: { role: nextSlot, permissionKey },
+          },
+          create: {
+            role: nextSlot,
+            permissionKey,
+            enabled: false,
+          },
+          update: {},
+        }),
+      ),
+    ]);
+
+    const roles = await this.getRoles();
+    return { createdRole: nextSlot, roles };
+  }
+
+  async deleteCrmRole(role: Role) {
+    if (!isCrmExtraRoleName(role)) {
+      throw new BadRequestException('Удалить можно только дополнительную CRM-роль');
+    }
+    const p = await this.prisma.crmProvisionedRole.findUnique({
+      where: { role },
+    });
+    if (!p) {
+      throw new NotFoundException('Роль не найдена');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.crmProvisionedRole.delete({ where: { role } }),
+      this.prisma.roleCustomLabel.deleteMany({ where: { role } }),
+      this.prisma.rolePermission.deleteMany({ where: { role } }),
+      this.prisma.venueAccessCode.deleteMany({ where: { role } }),
+    ]);
+
+    return this.getRoles();
+  }
+
+  private async assertCrmExtraProvisioned(role: Role): Promise<void> {
+    if (!isCrmExtraRoleName(role)) return;
+    const p = await this.prisma.crmProvisionedRole.findUnique({
+      where: { role },
+    });
+    if (!p) {
+      throw new NotFoundException('Дополнительная роль не найдена');
+    }
+  }
+
+  async updateRoleLabel(role: Role, label: string) {
+    if (!Object.values(Role).includes(role)) {
+      throw new BadRequestException(`Invalid role: ${role}`);
+    }
+    await this.assertCrmExtraProvisioned(role);
+    const trimmed = label.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Укажите название роли');
+    }
+    await this.prisma.roleCustomLabel.upsert({
+      where: { role },
+      create: { role, label: trimmed },
+      update: { label: trimmed },
+    });
+    return this.getRoles();
+  }
+
+  async deleteRoleLabel(role: Role) {
+    if (!Object.values(Role).includes(role)) {
+      throw new BadRequestException(`Invalid role: ${role}`);
+    }
+    await this.assertCrmExtraProvisioned(role);
+    await this.prisma.roleCustomLabel.deleteMany({ where: { role } });
+    return this.getRoles();
   }
 
   async updateRolePermissions(
@@ -152,6 +278,7 @@ export class SettingsService {
     if (!Object.values(Role).includes(role)) {
       throw new BadRequestException(`Invalid role: ${role}`);
     }
+    await this.assertCrmExtraProvisioned(role);
 
     const allowed = new Set(CRM_PERMISSION_KEYS);
     for (const p of permissions) {
@@ -187,6 +314,7 @@ export class SettingsService {
     if (!Object.values(Role).includes(role)) {
       throw new BadRequestException(`Invalid role: ${role}`);
     }
+    await this.assertCrmExtraProvisioned(role);
 
     const code = this.generateAlphanumericCode(6);
     const accessCode = await this.prisma.venueAccessCode.upsert({
@@ -214,7 +342,7 @@ export class SettingsService {
       isActive: boolean;
       staffVenues?: { some: { venueId: string } };
     } = {
-      role: { in: [Role.OPERATOR, Role.MANAGER] },
+      role: { in: EMPLOYEE_ASSIGNABLE_ROLES },
       isActive: true,
     };
     if (venueId) {
@@ -231,8 +359,8 @@ export class SettingsService {
   }
 
   async createEmployee(dto: CreateEmployeeDto) {
-    if (dto.role !== Role.OPERATOR && dto.role !== Role.MANAGER) {
-      throw new BadRequestException('Role must be OPERATOR or MANAGER');
+    if (!EMPLOYEE_ASSIGNABLE_ROLES.includes(dto.role)) {
+      throw new BadRequestException('Недопустимая роль сотрудника');
     }
 
     const phoneNorm = normalizeKzPhone(dto.phone);
@@ -273,7 +401,7 @@ export class SettingsService {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
-        role: { in: [Role.OPERATOR, Role.MANAGER] },
+        role: { in: EMPLOYEE_ASSIGNABLE_ROLES },
       },
     });
     if (!user) {
@@ -282,7 +410,12 @@ export class SettingsService {
 
     const updateData: { name?: string; role?: Role } = {};
     if (dto.name !== undefined) updateData.name = dto.name;
-    if (dto.role !== undefined) updateData.role = dto.role;
+    if (dto.role !== undefined) {
+      if (!EMPLOYEE_ASSIGNABLE_ROLES.includes(dto.role)) {
+        throw new BadRequestException('Недопустимая роль сотрудника');
+      }
+      updateData.role = dto.role;
+    }
 
     return this.prisma.user.update({
       where: { id },
@@ -297,7 +430,7 @@ export class SettingsService {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
-        role: { in: [Role.OPERATOR, Role.MANAGER] },
+        role: { in: EMPLOYEE_ASSIGNABLE_ROLES },
       },
     });
     if (!user) {

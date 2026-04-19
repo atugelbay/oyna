@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Gift, UserPlus, UserRound } from "lucide-react";
 import { Avatar } from "@/components/ui";
-import { AddPlayerModal } from "@/components/crm/AddPlayerModal";
+import { AddPlayerModal, type EditPlayerPayload } from "@/components/crm/AddPlayerModal";
+import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
 import { PlayerProfileModal } from "@/components/crm/PlayerProfileModal";
 import { SegmentBadge } from "@/components/crm/SegmentBadge";
 import { readApiUserError } from "@/lib/api-error-message";
@@ -53,9 +54,24 @@ function PlayersPageContent() {
   const [listQuickFilter, setListQuickFilter] = useState<ListQuickFilter>("");
   const [page, setPage] = useState(1);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editPlayer, setEditPlayer] = useState<Player | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { confirmDelete, dialog: deleteDialog } = useConfirmDelete();
   const [profileOpen, setProfileOpen] = useState(false);
   const [profilePlayerId, setProfilePlayerId] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (!menuOpenId) return;
+    function handleDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpenId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleDown);
+    return () => document.removeEventListener("mousedown", handleDown);
+  }, [menuOpenId]);
 
   const [players, setPlayers] = useState<Player[]>([]);
   const [stats, setStats] = useState({ newToday: 0, birthdaysToday: 0 });
@@ -104,6 +120,44 @@ function PlayersPageContent() {
   function refreshPlayers() {
     setRefreshTick((t) => t + 1);
   }
+
+  function openAddModal() {
+    setEditPlayer(null);
+    setAddModalOpen(true);
+  }
+
+  function openEditModal(player: Player) {
+    setEditPlayer(player);
+    setAddModalOpen(false);
+    setMenuOpenId(null);
+  }
+
+  async function requestDeactivatePlayer(player: Player) {
+    const ok = await confirmDelete({
+      title: "Удалить игрока?",
+      message: `Игрок «${player.nickname}» будет отключён и исчезнет из списка. Данные сохраняются в системе.`,
+      confirmLabel: "Удалить",
+    });
+    if (!ok) return;
+    try {
+      await playersService.deactivate(player.id);
+      setMenuOpenId(null);
+      refreshPlayers();
+    } catch (err) {
+      setError(readApiUserError(err, "Не удалось удалить игрока"));
+    }
+  }
+
+  const formModalOpen = addModalOpen || !!editPlayer;
+  const editPayload: EditPlayerPayload | null = editPlayer
+    ? {
+        id: editPlayer.id,
+        phone: editPlayer.phone,
+        nickname: editPlayer.nickname,
+        name: editPlayer.name,
+        birthDate: editPlayer.birthDate,
+      }
+    : null;
 
   const openPlayerProfile = useCallback((id: string) => {
     setProfilePlayerId(id);
@@ -267,6 +321,7 @@ function PlayersPageContent() {
                 <th className="py-3 px-4 font-medium">Количество сессии</th>
                 <th className="py-3 px-4 font-medium">Баланс</th>
                 <th className="py-3 px-4 font-medium">Сегмент</th>
+                <th className="py-3 px-4 w-14 text-right font-medium" aria-label="Действия" />
               </tr>
             </thead>
             <tbody>
@@ -279,6 +334,7 @@ function PlayersPageContent() {
                   <td className="py-3 px-4"><span className="inline-block h-5 w-8 rounded bg-bg-card animate-pulse" /></td>
                   <td className="py-3 px-4"><span className="inline-block h-5 w-12 rounded bg-bg-card animate-pulse" /></td>
                   <td className="py-3 px-4"><span className="inline-block h-5 w-12 rounded bg-bg-card animate-pulse" /></td>
+                  <td className="py-3 px-4 w-14" />
                 </tr>
               ))}
             </tbody>
@@ -297,6 +353,7 @@ function PlayersPageContent() {
                   <th className="py-3 px-4 font-medium">Количество сессии</th>
                   <th className="py-3 px-4 font-medium">Баланс</th>
                   <th className="py-3 px-4 font-medium">Сегмент</th>
+                  <th className="py-3 px-4 w-14 text-right font-medium" aria-label="Действия" />
                 </tr>
               </thead>
               <tbody>
@@ -324,6 +381,48 @@ function PlayersPageContent() {
                     <td className="py-3 px-4 text-text-primary">{player.balanceMinutes} мин</td>
                     <td className="py-3 px-4">
                       <SegmentBadge segment={player.segment} />
+                    </td>
+                    <td className="py-3 px-4 text-right align-middle">
+                      <div
+                        className="relative inline-flex justify-end"
+                        ref={menuOpenId === player.id ? menuRef : undefined}
+                      >
+                        <button
+                          type="button"
+                          className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted hover:bg-white/5 hover:text-text-primary"
+                          aria-expanded={menuOpenId === player.id}
+                          aria-label="Действия"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenId((id) => (id === player.id ? null : player.id));
+                          }}
+                        >
+                          <MoreVerticalIcon />
+                        </button>
+                        {menuOpenId === player.id ? (
+                          <div
+                            className="absolute right-0 top-full z-30 mt-1 min-w-[10rem] rounded-xl border border-surface-border bg-[#1F2B38] py-1 shadow-xl"
+                            role="menu"
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="block w-full px-4 py-2.5 text-left text-sm text-text-primary hover:bg-white/5"
+                              onClick={() => openEditModal(player)}
+                            >
+                              Редактировать
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="block w-full px-4 py-2.5 text-left text-sm text-danger hover:bg-white/5"
+                              onClick={() => void requestDeactivatePlayer(player)}
+                            >
+                              Удалить
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -375,7 +474,7 @@ function PlayersPageContent() {
             </div>
             <button
               type="button"
-              onClick={() => setAddModalOpen(true)}
+              onClick={() => openAddModal()}
               className="inline-flex h-[51px] items-center gap-2 rounded-full bg-cyan px-5 text-sm font-bold text-bg-primary transition-[filter] hover:brightness-110"
             >
               <UserPlus className="h-5 w-5 shrink-0 text-bg-primary" strokeWidth={2} />
@@ -388,7 +487,7 @@ function PlayersPageContent() {
       {(loading || hasResults) && (
         <button
           type="button"
-          onClick={() => setAddModalOpen(true)}
+          onClick={() => openAddModal()}
           className="fixed bottom-8 right-8 flex items-center gap-2 px-5 py-3 rounded-xl bg-cyan text-bg-primary font-semibold text-sm shadow-lg hover:brightness-110 transition-opacity"
         >
           <PlusIcon />
@@ -397,13 +496,19 @@ function PlayersPageContent() {
       )}
 
       <AddPlayerModal
-        isOpen={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
+        isOpen={formModalOpen}
+        editPlayer={editPayload}
+        onClose={() => {
+          setAddModalOpen(false);
+          setEditPlayer(null);
+        }}
         onAdded={(id) => {
           refreshPlayers();
           openPlayerProfile(id);
         }}
+        onUpdated={() => refreshPlayers()}
       />
+      {deleteDialog}
       <PlayerProfileModal
         playerId={profilePlayerId}
         isOpen={profileOpen}
@@ -458,6 +563,16 @@ function ChevronRightIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+function MoreVerticalIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="12" cy="19" r="2" />
     </svg>
   );
 }

@@ -5,5 +5,7 @@ export * from './update-price-package.dto';
 export * from './update-loyalty-level.dto';
 export * from './update-employee.dto';
 export * from './update-role-permissions.dto';
+export * from './update-role-label.dto';
+export * from './create-crm-role.dto';
 
 

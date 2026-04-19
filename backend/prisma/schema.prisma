@@ -11,6 +11,11 @@ enum Role {
   OPERATOR
   MANAGER
   ADMIN
+  CRM_EXTRA_1
+  CRM_EXTRA_2
+  CRM_EXTRA_3
+  CRM_EXTRA_4
+  CRM_EXTRA_5
 }
 
 enum LoyaltyStatus {
@@ -391,6 +396,23 @@ model RolePermission {
 
   @@unique([role, permissionKey])
   @@map("role_permissions")
+}
+
+/** Пользовательское отображаемое имя роли в CRM (идентификатор Role в enum не меняется) */
+model RoleCustomLabel {
+  role      Role   @id
+  label     String
+  updatedAt DateTime @updatedAt
+
+  @@map("role_custom_labels")
+}
+
+/** Доп. CRM-роли (слоты CRM_EXTRA_*) созданы владельцем и участвуют в матрице прав */
+model CrmProvisionedRole {
+  role      Role     @id
+  createdAt DateTime @default(now())
+
+  @@map("crm_provisioned_roles")
 }
 
 model VenueAccessCode {

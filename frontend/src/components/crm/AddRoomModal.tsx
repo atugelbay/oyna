@@ -6,6 +6,13 @@ import { Input, Button } from "@/components/ui";
 import { readApiUserError } from "@/lib/api-error-message";
 import { roomsService } from "@/services/rooms.service";
 import { gameModesService } from "@/services/game-modes.service";
+import { uniqueSessionsFromModes } from "@/lib/room-sessions";
+
+type EditRoomPayload = {
+  id: string;
+  name: string;
+  modes: Array<{ id: string; name: string; config?: unknown | null }>;
+};
 
 interface AddRoomModalProps {
   isOpen: boolean;
@@ -13,6 +20,8 @@ interface AddRoomModalProps {
   venueId: string;
   defaultType?: string;
   onAdded?: () => void;
+  /** Редактирование существующей комнаты */
+  editRoom?: EditRoomPayload | null;
 }
 
 type DraftSession = {
@@ -21,7 +30,14 @@ type DraftSession = {
   minutes: number;
 };
 
-export function AddRoomModal({ isOpen, onClose, venueId, defaultType, onAdded }: AddRoomModalProps) {
+export function AddRoomModal({
+  isOpen,
+  onClose,
+  venueId,
+  defaultType,
+  onAdded,
+  editRoom,
+}: AddRoomModalProps) {
   const [mounted, setMounted] = useState(false);
   const [name, setName] = useState("");
   const [sessionName, setSessionName] = useState("");
@@ -36,13 +52,26 @@ export function AddRoomModal({ isOpen, onClose, venueId, defaultType, onAdded }:
 
   useEffect(() => {
     if (!isOpen) return;
-    setName("");
     setSessionName("");
     setSessionMinutes("");
-    setSessions([]);
     setError(null);
     setSubmitting(false);
-  }, [isOpen]);
+
+    if (editRoom) {
+      setName(editRoom.name);
+      const rows = uniqueSessionsFromModes(editRoom.modes);
+      setSessions(
+        rows.map((s, i) => ({
+          id: `edit-${editRoom.id}-${i}-${s.name}`,
+          name: s.name,
+          minutes: s.minutes,
+        })),
+      );
+    } else {
+      setName("");
+      setSessions([]);
+    }
+  }, [isOpen, editRoom]);
 
   function close() {
     onClose();
@@ -93,6 +122,47 @@ export function AddRoomModal({ isOpen, onClose, venueId, defaultType, onAdded }:
     }
 
     setSubmitting(true);
+
+    const applyModesForRoom = async (roomId: string) => {
+      let order = 0;
+      for (const session of sessions) {
+        const cfg = { durationSeconds: session.minutes * 60, sortOrder: order };
+        await gameModesService.create({
+          roomId,
+          type: "COOP",
+          name: session.name,
+          config: cfg,
+        });
+        await gameModesService.create({
+          roomId,
+          type: "FFA",
+          name: session.name,
+          config: cfg,
+        });
+        order += 1;
+      }
+    };
+
+    if (editRoom) {
+      void (async () => {
+        try {
+          await Promise.all(editRoom.modes.map((m) => gameModesService.remove(m.id)));
+          await roomsService.update(editRoom.id, {
+            name: trimmedName,
+            defaultLevelDuration: sessions[0].minutes * 60,
+          });
+          await applyModesForRoom(editRoom.id);
+          onAdded?.();
+          close();
+        } catch (err: unknown) {
+          setError(readApiUserError(err, "Не удалось сохранить комнату"));
+        } finally {
+          setSubmitting(false);
+        }
+      })();
+      return;
+    }
+
     roomsService
       .create({
         venueId,
@@ -101,27 +171,11 @@ export function AddRoomModal({ isOpen, onClose, venueId, defaultType, onAdded }:
         defaultLevelDuration: sessions[0].minutes * 60,
       })
       .then(async (room: { id: string }) => {
-        let order = 0;
-        for (const session of sessions) {
-          const cfg = { durationSeconds: session.minutes * 60, sortOrder: order };
-          await gameModesService.create({
-            roomId: room.id,
-            type: "COOP",
-            name: session.name,
-            config: cfg,
-          });
-          await gameModesService.create({
-            roomId: room.id,
-            type: "FFA",
-            name: session.name,
-            config: cfg,
-          });
-          order += 1;
-        }
+        await applyModesForRoom(room.id);
         onAdded?.();
         close();
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         setError(readApiUserError(err, "Ошибка добавления комнаты"));
       })
       .finally(() => {
@@ -161,7 +215,7 @@ export function AddRoomModal({ isOpen, onClose, venueId, defaultType, onAdded }:
                 <BackIcon />
               </button>
               <h2 id="add-room-title" className="text-lg font-semibold text-white">
-                Добавление комнаты
+                {editRoom ? "Редактирование комнаты" : "Добавление комнаты"}
               </h2>
             </div>
 

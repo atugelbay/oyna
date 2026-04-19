@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { AddPricePackageModal } from "@/components/crm/AddPricePackageModal";
+import { EditPricePackageModal } from "@/components/crm/EditPricePackageModal";
 import { settingsService } from "@/services/settings.service";
 import { readApiUserError } from "@/lib/api-error-message";
+import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
 
 type PricePackage = { id: string; name: string; minutes: number; costTenge: number };
 
@@ -16,7 +18,11 @@ export default function SettingsPricesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editPackage, setEditPackage] = useState<PricePackage | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const { confirmDelete, dialog: deleteDialog } = useConfirmDelete();
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +48,25 @@ export default function SettingsPricesPage() {
     setRefreshTick((v) => v + 1);
   }
 
+  async function handleDelete(p: PricePackage) {
+    if (deletingId) return;
+    const ok = await confirmDelete({
+      title: "Удалить пакет?",
+      message: `Пакет «${p.name}» будет удалён безвозвратно.`,
+    });
+    if (!ok) return;
+    setOperationError(null);
+    setDeletingId(p.id);
+    try {
+      await settingsService.deletePricePackage(p.id);
+      refreshPackages();
+    } catch (err) {
+      setOperationError(readApiUserError(err, "Не удалось удалить пакет"));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -60,6 +85,9 @@ export default function SettingsPricesPage() {
 
   return (
     <div className="space-y-6">
+      {operationError ? (
+        <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">{operationError}</p>
+      ) : null}
       <div className="bg-bg-secondary rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -80,17 +108,24 @@ export default function SettingsPricesPage() {
                   <div className="flex justify-end gap-2 whitespace-nowrap">
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full bg-[#24364A] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#2A3E55]"
+                      disabled={deletingId === p.id}
+                      onClick={() => {
+                        setOperationError(null);
+                        setEditPackage(p);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#24364A] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#2A3E55] disabled:opacity-50"
                     >
                       <PencilIcon className="w-4 h-4" />
                       Изменить
                     </button>
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full bg-[#24364A] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#2A3E55]"
+                      disabled={deletingId !== null}
+                      onClick={() => void handleDelete(p)}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#24364A] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#2A3E55] disabled:opacity-50"
                     >
                       <TrashIcon className="w-4 h-4" />
-                      Удалить
+                      {deletingId === p.id ? "Удаление…" : "Удалить"}
                     </button>
                   </div>
                 </td>
@@ -112,6 +147,16 @@ export default function SettingsPricesPage() {
         onClose={() => setAddModalOpen(false)}
         onAdded={refreshPackages}
       />
+      <EditPricePackageModal
+        isOpen={editPackage !== null}
+        package={editPackage}
+        onClose={() => setEditPackage(null)}
+        onSaved={() => {
+          setOperationError(null);
+          refreshPackages();
+        }}
+      />
+      {deleteDialog}
     </div>
   );
 }

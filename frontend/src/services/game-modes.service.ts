@@ -22,5 +22,10 @@ export const gameModesService = {
     const { data } = await api.post("/game-modes", payload);
     return data;
   },
+
+  async remove(id: string) {
+    const { data } = await api.delete(`/game-modes/${id}`);
+    return data;
+  },
 };
 

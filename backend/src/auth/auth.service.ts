@@ -132,7 +132,16 @@ export class AuthService {
       throw new UnauthorizedException('Аккаунт заблокирован');
     }
 
-    const allowedRoles = ['ADMIN', 'MANAGER', 'OPERATOR'];
+    const allowedRoles = [
+      'ADMIN',
+      'MANAGER',
+      'OPERATOR',
+      'CRM_EXTRA_1',
+      'CRM_EXTRA_2',
+      'CRM_EXTRA_3',
+      'CRM_EXTRA_4',
+      'CRM_EXTRA_5',
+    ];
     if (!allowedRoles.includes(user.role)) {
       throw new UnauthorizedException('Нет доступа к CRM');
     }

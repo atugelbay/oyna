@@ -38,8 +38,8 @@ export class RoomsController {
   @Post()
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Создать комнату (админ)' })
+  @Roles(Role.ADMIN, Role.MANAGER)
+  @ApiOperation({ summary: 'Создать комнату' })
   create(@Body() dto: CreateRoomDto) {
     return this.roomsService.create(dto);
   }
@@ -59,8 +59,8 @@ export class RoomsController {
   @Delete(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Удалить комнату (админ)' })
+  @Roles(Role.ADMIN, Role.MANAGER)
+  @ApiOperation({ summary: 'Удалить комнату' })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.roomsService.remove(id);
   }

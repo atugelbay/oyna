@@ -77,8 +77,8 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles(Role.MANAGER, Role.ADMIN)
-  @ApiOperation({ summary: 'Редактирование пользователя (менеджер/админ)' })
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  @ApiOperation({ summary: 'Редактирование пользователя (CRM)' })
   @ApiResponse({ status: 200, description: 'Обновлено' })
   update(
     @Param('id', ParseUUIDPipe) id: string,

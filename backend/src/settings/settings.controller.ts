@@ -22,6 +22,8 @@ import {
   UpdateLoyaltyLevelDto,
   UpdateEmployeeDto,
   UpdateRolePermissionsDto,
+  UpdateRoleLabelDto,
+  CreateCrmRoleDto,
 } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards';
@@ -107,6 +109,39 @@ export class SettingsController {
   @ApiOperation({ summary: 'Get roles with permissions and access codes' })
   getRoles() {
     return this.settingsService.getRoles();
+  }
+
+  @Post('roles')
+  @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Create additional CRM role (dedicated slot, up to 5)',
+  })
+  createCrmRole(@Body() dto: CreateCrmRoleDto) {
+    return this.settingsService.createCrmRole(dto.label);
+  }
+
+  @Delete('roles/:role')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Delete additional CRM role (CRM_EXTRA_* only)' })
+  deleteCrmRole(@Param('role') role: Role) {
+    return this.settingsService.deleteCrmRole(role);
+  }
+
+  @Patch('roles/:role/label')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Set custom CRM display name for role (enum value unchanged)' })
+  updateRoleLabel(
+    @Param('role') role: Role,
+    @Body() dto: UpdateRoleLabelDto,
+  ) {
+    return this.settingsService.updateRoleLabel(role, dto.label);
+  }
+
+  @Delete('roles/:role/label')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Reset role display name to default' })
+  clearRoleLabel(@Param('role') role: Role) {
+    return this.settingsService.deleteRoleLabel(role);
   }
 
   @Patch('roles/:role')

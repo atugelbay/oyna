@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { SessionStatus, TransactionType } from '@prisma/client';
+import { Role, SessionStatus, TransactionType } from '@prisma/client';
 
 function getDateRange(period: string): { from: Date; to: Date } {
   const now = new Date();
@@ -141,6 +141,7 @@ export class StatsService {
         this.prisma.gameSession.count({ where: sessionWhere }),
         this.prisma.gameSessionPlayer.findMany({
           where: {
+            user: { role: Role.USER },
             session: {
               createdAt: { gte: todayStart },
               ...(venueId ? { venueId } : {}),
@@ -151,6 +152,7 @@ export class StatsService {
         }),
         this.prisma.user.count({
           where: {
+            role: Role.USER,
             createdAt: { gte: todayStart },
           },
         }),
@@ -319,18 +321,16 @@ export class StatsService {
       }),
       this.prisma.user.count({
         where: {
+          role: Role.USER,
           createdAt: { gte: from, lte: to },
         },
       }),
-      this.prisma.user.count(),
+      this.prisma.user.count({ where: { role: Role.USER } }),
     ]);
 
-    const avgSessionMinutes =
-      sessionsWithDeducted.length > 0
-        ? sessionsWithDeducted.reduce((sum, s) => sum + s.deductedSeconds, 0) /
-          sessionsWithDeducted.length /
-          60
-        : 0;
+    /** Суммарное списанное время всех завершённых сессий за период (минуты) */
+    const totalSessionMinutes =
+      sessionsWithDeducted.reduce((sum, s) => sum + s.deductedSeconds, 0) / 60;
 
     const bonusMinutesGiven =
       bonusTransactions.reduce((sum, t) => sum + Math.max(0, t.equivalentSeconds), 0) / 60;
@@ -354,7 +354,7 @@ export class StatsService {
       totalPlayers: totalPlayersRegistered,
       newPlayers: userCreatedInPeriod,
       totalSessions,
-      avgSessionMinutes: Math.round(avgSessionMinutes * 100) / 100,
+      totalSessionMinutes: Math.round(totalSessionMinutes * 100) / 100,
       bonusMinutesGiven: Math.round(bonusMinutesGiven * 100) / 100,
       bonusSessionsGiven: bonusTransactions.length,
       popularRooms,

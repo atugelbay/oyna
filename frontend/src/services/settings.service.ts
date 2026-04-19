@@ -95,6 +95,28 @@ export const settingsService = {
     return data;
   },
 
+  async updateRoleLabel(role: string, label: string) {
+    const { data } = await api.patch(`/settings/roles/${role}/label`, {
+      label,
+    });
+    return data;
+  },
+
+  async clearRoleLabel(role: string) {
+    const { data } = await api.delete(`/settings/roles/${role}/label`);
+    return data;
+  },
+
+  async createCrmRole(label: string) {
+    const { data } = await api.post("/settings/roles", { label });
+    return data as { createdRole: string; roles: unknown[] };
+  },
+
+  async deleteCrmRole(role: string) {
+    const { data } = await api.delete(`/settings/roles/${encodeURIComponent(role)}`);
+    return data;
+  },
+
   // Employees
   async getEmployees(venueId?: string) {
     const { data } = await api.get("/settings/employees", {

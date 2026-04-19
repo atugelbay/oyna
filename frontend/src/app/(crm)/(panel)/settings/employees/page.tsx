@@ -1,17 +1,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { readApiUserError } from "@/lib/api-error-message";
 import { settingsService } from "@/services/settings.service";
 import { useAuth } from "@/lib/auth-context";
 import { useCrmVenue } from "@/lib/venue-context";
+import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
+import { EmployeeModal, type EmployeeModalState } from "@/components/crm/EmployeeModal";
 
 type Employee = { id: string; name: string; phone: string; role: string };
 
 export default function SettingsEmployeesPage() {
-  const router = useRouter();
   const { user } = useAuth();
   const { selectedVenueId } = useCrmVenue();
   const isAdmin = user?.role?.toUpperCase() === "ADMIN";
@@ -20,6 +19,9 @@ export default function SettingsEmployeesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [employeeModal, setEmployeeModal] = useState<EmployeeModalState>({ kind: "closed" });
+  const { confirmDelete, dialog: deleteDialog } = useConfirmDelete();
 
   useEffect(() => {
     let cancelled = false;
@@ -39,17 +41,24 @@ export default function SettingsEmployeesPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedVenueId]);
+  }, [selectedVenueId, refreshTick]);
 
-  async function handleDelete(e: Employee) {
+  function refreshEmployees() {
+    setRefreshTick((t) => t + 1);
+  }
+
+  async function handleDelete(emp: Employee) {
     if (!isAdmin || deletingId) return;
-    const ok = window.confirm(`Удалить сотрудника «${e.name}»? Доступ к CRM будет отключён.`);
+    const ok = await confirmDelete({
+      title: "Удалить сотрудника?",
+      message: `Сотрудник «${emp.name}» будет отключён. Доступ к CRM для этого аккаунта будет закрыт.`,
+    });
     if (!ok) return;
-    setDeletingId(e.id);
+    setDeletingId(emp.id);
     setError(null);
     try {
-      await settingsService.deleteEmployee(e.id);
-      setEmployees((prev) => prev.filter((x) => x.id !== e.id));
+      await settingsService.deleteEmployee(emp.id);
+      refreshEmployees();
     } catch (err: unknown) {
       setError(readApiUserError(err, "Не удалось удалить сотрудника"));
     } finally {
@@ -96,7 +105,17 @@ export default function SettingsEmployeesPage() {
                     <div className="flex justify-end gap-2 whitespace-nowrap">
                       <button
                         type="button"
-                        onClick={() => router.push(`/settings/employees/${e.id}/edit`)}
+                        onClick={() =>
+                          setEmployeeModal({
+                            kind: "edit",
+                            employee: {
+                              id: e.id,
+                              name: e.name,
+                              phone: e.phone,
+                              role: e.role,
+                            },
+                          })
+                        }
                         className="inline-flex items-center gap-1.5 rounded-full bg-[#24364A] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#2A3E55]"
                       >
                         <PencilIcon className="w-4 h-4" />
@@ -122,14 +141,24 @@ export default function SettingsEmployeesPage() {
         </table>
       </div>
       {isAdmin ? (
-        <Link
-          href="/settings/employees/new"
-          className="fixed bottom-8 right-8 flex items-center gap-2 px-5 py-3 rounded-xl bg-cyan text-bg-primary font-semibold text-sm shadow-lg hover:brightness-110 transition-opacity"
+        <button
+          type="button"
+          onClick={() => setEmployeeModal({ kind: "add" })}
+          className="fixed bottom-8 right-8 flex items-center gap-2 rounded-xl bg-cyan px-5 py-3 text-sm font-semibold text-bg-primary shadow-lg transition-opacity hover:brightness-110"
         >
-          <PlusIcon className="w-5 h-5" />
+          <PlusIcon className="h-5 w-5" />
           Добавить
-        </Link>
+        </button>
       ) : null}
+      <EmployeeModal
+        state={employeeModal}
+        onClose={() => setEmployeeModal({ kind: "closed" })}
+        onSaved={() => {
+          setError(null);
+          refreshEmployees();
+        }}
+      />
+      {deleteDialog}
     </div>
   );
 }

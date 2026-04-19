@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useCrmSidebarLayout } from "@/lib/crm-sidebar-layout-context";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Главная", icon: "/icons/navbar/home.png" },
@@ -17,37 +18,51 @@ const NAV_ITEMS = [
 /** Навигация на том же градиентном фоне, что и шапка (без отдельной «плашки») */
 export function CrmSidebar() {
   const pathname = usePathname();
+  const { collapsed, railWidthClass } = useCrmSidebarLayout();
 
   return (
-    <aside className="flex w-24 shrink-0 flex-col bg-transparent py-2 sm:w-28">
-      <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2">
+    <aside
+      className={`flex shrink-0 flex-col bg-transparent py-2 transition-[width] duration-200 ease-out ${railWidthClass}`}
+    >
+      <nav
+        id="crm-sidebar-nav"
+        className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${collapsed ? "items-center gap-1 px-1" : "gap-2 px-2"}`}
+      >
         {NAV_ITEMS.map(({ href, label, icon }) => {
           const isActive = pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
+          const iconWrap = collapsed
+            ? isActive
+              ? "h-10 w-10 rounded-2xl bg-white/90"
+              : "h-10 w-10 rounded-2xl"
+            : isActive
+              ? "h-[31px] w-[53px] rounded-[21px] bg-white/90"
+              : "h-10 w-10 rounded-2xl";
+
           return (
             <Link
               key={href}
               href={href}
+              title={collapsed ? label : undefined}
+              aria-label={collapsed ? label : undefined}
               className={`
-                group relative flex shrink-0 flex-col items-center gap-1 rounded-lg py-1.5 transition-colors
+                group relative flex shrink-0 flex-col items-center rounded-lg transition-colors
+                ${collapsed ? "gap-0 py-1" : "gap-1 py-1.5"}
                 ${isActive ? "text-text-secondary" : "text-text-secondary hover:bg-white/5 hover:text-white"}
               `}
             >
-              <span
-                className={`
-                  flex shrink-0 items-center justify-center
-                  ${isActive ? "h-[31px] w-[53px] rounded-[21px] bg-white/90" : "h-10 w-10 rounded-2xl"}
-                `}
-              >
+              <span className={`flex shrink-0 items-center justify-center ${iconWrap}`}>
                 <Image
                   src={icon}
-                  alt={label}
+                  alt=""
                   width={26}
                   height={26}
                   className={`h-fit w-fit shrink-0 ${isActive ? "opacity-100 brightness-0" : "opacity-70 group-hover:opacity-100"}`}
                   unoptimized
                 />
               </span>
-              <span className="text-center text-xs font-medium leading-tight">{label}</span>
+              {!collapsed ? (
+                <span className="text-center text-xs font-medium leading-tight">{label}</span>
+              ) : null}
             </Link>
           );
         })}

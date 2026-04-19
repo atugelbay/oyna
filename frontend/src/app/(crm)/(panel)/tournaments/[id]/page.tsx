@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui";
 import { tournamentsService } from "@/services/tournaments.service";
 import { readApiUserError } from "@/lib/api-error-message";
+import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
 
 type TeamMember = { nickname: string; phone: string; birthDate: string; segment: string; isCaptain: boolean };
 type ResultRow = { rank: number; nickname: string; score: number };
@@ -40,6 +41,7 @@ export default function TournamentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { confirmDelete, dialog: deleteDialog } = useConfirmDelete();
 
   useEffect(() => {
     if (!id) return;
@@ -105,10 +107,13 @@ export default function TournamentDetailPage() {
 
   async function handleDelete() {
     if (deleting) return;
-    if (!id) return;
+    if (!id || !t) return;
 
     setActionError(null);
-    const ok = window.confirm("Удалить это событие?");
+    const ok = await confirmDelete({
+      title: "Удалить турнир?",
+      message: `Событие «${t.name}» будет удалено безвозвратно.`,
+    });
     if (!ok) return;
 
     setDeleting(true);
@@ -155,9 +160,12 @@ export default function TournamentDetailPage() {
           О турнире
         </Link>
         <div className="flex gap-2">
-          <button type="button" className="px-4 py-2 rounded-lg border border-surface-border text-text-primary text-sm font-medium hover:bg-bg-card">
+          <Link
+            href={`/tournaments/${id}/edit`}
+            className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-card"
+          >
             Изменить
-          </button>
+          </Link>
           <button
             type="button"
             onClick={handleDelete}
@@ -338,6 +346,7 @@ export default function TournamentDetailPage() {
           </div>
         </div>
       )}
+      {deleteDialog}
     </div>
   );
 }

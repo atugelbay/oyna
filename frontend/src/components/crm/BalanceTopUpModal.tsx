@@ -6,6 +6,7 @@ import { Button } from "@/components/ui";
 import { settingsService } from "@/services/settings.service";
 import { balanceService } from "@/services/balance.service";
 import { promosService } from "@/services/promos.service";
+import { playersService } from "@/services/players.service";
 import { readApiUserError } from "@/lib/api-error-message";
 
 type BaseTopUpMode = "packages" | "individual";
@@ -82,6 +83,38 @@ function promoEffectLabel(p: PromoOption): { kind: "bonus" | "discount" | "unkno
     parsePromoDiscountPercent(p.quantity) ?? parsePromoDiscountPercent(p.reward);
   if (pct != null) return { kind: "discount", text: `−${pct}%` };
   return { kind: "unknown", text: "" };
+}
+
+type LoyaltyLevelRow = {
+  name: string;
+  minPoints: number;
+  bonusMinutes: number;
+};
+
+/** Бонус минут для текущего количества баллов: берётся уровень с max(minPoints) среди тех, где points ≥ minPoints */
+function resolveLoyaltyLevelBonus(
+  levels: LoyaltyLevelRow[],
+  points: number,
+): { bonusMinutes: number; levelName: string | null } {
+  if (!levels.length) return { bonusMinutes: 0, levelName: null };
+  let best: LoyaltyLevelRow | null = null;
+  for (const l of levels) {
+    if (points >= l.minPoints) {
+      if (!best || l.minPoints > best.minPoints) best = l;
+    }
+  }
+  if (!best) return { bonusMinutes: 0, levelName: null };
+  return { bonusMinutes: Math.max(0, best.bonusMinutes), levelName: best.name };
+}
+
+function normalizeLoyaltyLevelRow(raw: unknown, index: number): LoyaltyLevelRow {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const name = typeof obj.name === "string" && obj.name.trim() ? obj.name.trim() : `Уровень ${index + 1}`;
+  return {
+    name,
+    minPoints: toNumber(obj.minPoints),
+    bonusMinutes: toNumber(obj.bonusMinutes),
+  };
 }
 
 function promoIsActiveNow(p: PromoOption, nowMs = Date.now()): boolean {
@@ -288,7 +321,8 @@ export function BalanceTopUpPanel({
   const [promosLoading, setPromosLoading] = useState(false);
   const [promosError, setPromosError] = useState<string | null>(null);
   const [selectedPromoIds, setSelectedPromoIds] = useState<string[]>([]);
-  const [levelBonusEnabled, setLevelBonusEnabled] = useState(false);
+  const [loyaltyLevels, setLoyaltyLevels] = useState<LoyaltyLevelRow[]>([]);
+  const [playerTotalScore, setPlayerTotalScore] = useState(0);
   const [individualMinutes, setIndividualMinutes] = useState(15);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("card");
   const [submitting, setSubmitting] = useState(false);
@@ -303,7 +337,8 @@ export function BalanceTopUpPanel({
     setSubmitting(false);
     setBaseMode("packages");
     setSelectedPromoIds([]);
-    setLevelBonusEnabled(false);
+    setLoyaltyLevels([]);
+    setPlayerTotalScore(0);
     setIndividualMinutes(15);
     setPaymentMethod("card");
 
@@ -337,6 +372,22 @@ export function BalanceTopUpPanel({
         setPromos([]);
       })
       .finally(() => setPromosLoading(false));
+
+    settingsService
+      .getLoyaltyLevels()
+      .then((data: unknown) => {
+        const list = (Array.isArray(data) ? data : []).map((item, index) => normalizeLoyaltyLevelRow(item, index));
+        setLoyaltyLevels(list);
+      })
+      .catch(() => setLoyaltyLevels([]));
+
+    playersService
+      .getById(playerId)
+      .then((data: unknown) => {
+        const obj = (data ?? {}) as Record<string, unknown>;
+        setPlayerTotalScore(toNumber(obj.totalScore));
+      })
+      .catch(() => setPlayerTotalScore(0));
   }, [playerId, venueId]);
 
   const selectedPackage = useMemo(
@@ -380,7 +431,8 @@ export function BalanceTopUpPanel({
       if (d != null) discountPercent = Math.max(discountPercent, d);
     }
 
-    const levelMinutes = levelBonusEnabled ? 50 : 0;
+    const loyaltyTier = resolveLoyaltyLevelBonus(loyaltyLevels, playerTotalScore);
+    const levelMinutes = loyaltyTier.bonusMinutes;
     const totalMinutes = baseMinutes + promoBonusMinutes + levelMinutes;
     const totalSeconds = totalMinutes * 60;
     const totalPay = Math.round(basePayBeforeDiscount * (1 - discountPercent / 100));
@@ -396,6 +448,7 @@ export function BalanceTopUpPanel({
       baseMinutes,
       promoBonusMinutes,
       levelMinutes,
+      levelName: loyaltyTier.levelName,
       discountPercent,
       basePayBeforeDiscount,
       totalMinutes,
@@ -403,7 +456,7 @@ export function BalanceTopUpPanel({
       totalPay,
       canSubmit,
     };
-  }, [baseMode, individualMinutes, levelBonusEnabled, selectedPackage, selectedPromos]);
+  }, [baseMode, individualMinutes, loyaltyLevels, playerTotalScore, selectedPackage, selectedPromos]);
 
   const showPriceStrike =
     computed.discountPercent > 0 && computed.basePayBeforeDiscount !== computed.totalPay;
@@ -489,20 +542,38 @@ export function BalanceTopUpPanel({
                       <button
                         type="button"
                         onClick={() => setIndividualMinutes((m) => Math.max(0, m - 5))}
-                        className="h-9 w-9 rounded-lg border border-surface-border text-text-primary hover:bg-bg-card"
+                        className="h-9 w-9 shrink-0 rounded-lg border border-surface-border text-text-primary hover:bg-bg-card"
                       >
                         −
                       </button>
-                      <input
-                        type="text"
-                        value={`${individualMinutes} мин`}
-                        readOnly
-                        className="h-9 w-24 rounded-lg border border-surface-border bg-bg-card px-2 text-center text-sm text-text-primary"
-                      />
+                      <div className="relative flex h-9 min-w-[6.5rem] max-w-[11rem] flex-1 items-center rounded-lg border border-surface-border bg-bg-card">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          aria-label="Количество минут"
+                          value={String(individualMinutes)}
+                          onChange={(e) => {
+                            const digits = e.target.value.replace(/\D/g, "");
+                            if (digits === "") {
+                              setIndividualMinutes(0);
+                              return;
+                            }
+                            const n = parseInt(digits, 10);
+                            if (!Number.isNaN(n)) {
+                              setIndividualMinutes(Math.min(999_999, Math.max(0, n)));
+                            }
+                          }}
+                          className="h-full w-full min-w-0 bg-transparent py-0 pl-2 pr-10 text-center text-sm text-text-primary outline-none focus:ring-1 focus:ring-inset focus:ring-cyan/40 rounded-lg"
+                        />
+                        <span className="pointer-events-none absolute right-2 text-xs text-text-muted select-none">
+                          мин
+                        </span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => setIndividualMinutes((m) => m + 5)}
-                        className="h-9 w-9 rounded-lg border border-surface-border text-text-primary hover:bg-bg-card"
+                        className="h-9 w-9 shrink-0 rounded-lg border border-surface-border text-text-primary hover:bg-bg-card"
                       >
                         +
                       </button>
@@ -554,19 +625,6 @@ export function BalanceTopUpPanel({
               />
               {promosError ? <p className="mt-2 text-xs text-danger">{promosError}</p> : null}
             </div>
-
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">Дополнительно</p>
-              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-[#1F2B38] px-4 py-3">
-                <span className="text-sm text-text-primary">Бонусные минуты от уровня</span>
-                <input
-                  type="checkbox"
-                  checked={levelBonusEnabled}
-                  onChange={(e) => setLevelBonusEnabled(e.target.checked)}
-                  className="h-4 w-4 accent-cyan"
-                />
-              </label>
-            </div>
           </div>
 
           {/* Payment method */}
@@ -604,8 +662,18 @@ export function BalanceTopUpPanel({
                   </span>
                 ) : null}
                 {computed.levelMinutes > 0 ? (
-                  <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success tabular-nums">
+                  <span
+                    title={
+                      computed.levelName
+                        ? `Бонус уровня «${computed.levelName}» (${playerTotalScore.toLocaleString("ru-RU")} баллов)`
+                        : undefined
+                    }
+                    className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success tabular-nums"
+                  >
                     +{computed.levelMinutes} мин
+                    {computed.levelName ? (
+                      <span className="ml-1 font-normal text-success/90">· {computed.levelName}</span>
+                    ) : null}
                   </span>
                 ) : null}
               </div>
@@ -667,6 +735,10 @@ export function BalanceTopUpPanel({
                     computed.discountPercent > 0
                       ? ` Скидка ${computed.discountPercent}% от ${computed.basePayBeforeDiscount} ₸.`
                       : "";
+                  const loyaltyPart =
+                    computed.levelMinutes > 0
+                      ? ` Бонус лояльности: +${computed.levelMinutes} мин (${playerTotalScore.toLocaleString("ru-RU")} очков${computed.levelName ? `, «${computed.levelName}»` : ""}).`
+                      : "";
 
                   setSubmitting(true);
                   balanceService
@@ -676,7 +748,7 @@ export function BalanceTopUpPanel({
                       bonusSeconds: (computed.promoBonusMinutes + computed.levelMinutes) * 60,
                       amountTenge: computed.totalPay,
                       ...(venueId ? { venueId } : {}),
-                      description: `Пополнение (${baseMode}, ${paymentMethod})${promoPart}${disc} ${playerName ?? "игрок"}`,
+                      description: `Пополнение (${baseMode}, ${paymentMethod})${promoPart}${disc}${loyaltyPart} ${playerName ?? "игрок"}`,
                     })
                     .then(() => {
                       onSuccess?.();

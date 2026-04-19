@@ -36,4 +36,10 @@ export const playersService = {
     const { data } = await api.patch(`/users/${id}`, payload);
     return data;
   },
+
+  /** Мягкое удаление: игрок скрывается из списка CRM */
+  async deactivate(id: string) {
+    const { data } = await api.patch(`/users/${id}`, { isActive: false });
+    return data;
+  },
 };

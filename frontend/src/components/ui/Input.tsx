@@ -7,7 +7,7 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   isPassword?: boolean;
 }
 
-export function Input({ label, isPassword, type, className, ...props }: InputProps) {
+export function Input({ label, isPassword, type, className, placeholder, ...props }: InputProps) {
   const [focused, setFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const hasValue = props.value !== undefined && props.value !== "";
@@ -15,6 +15,9 @@ export function Input({ label, isPassword, type, className, ...props }: InputPro
 
   const inputType = isPassword ? (showPassword ? "text" : "password") : type;
   const isDate = type === "date";
+
+  /** Пока подпись «внутри» поля, нативный placeholder не показываем — иначе текст накладывается друг на друга */
+  const resolvedPlaceholder = floating ? placeholder : undefined;
 
   return (
     <div className="relative w-full group">
@@ -31,6 +34,7 @@ export function Input({ label, isPassword, type, className, ...props }: InputPro
       </label>
       <input
         {...props}
+        placeholder={resolvedPlaceholder}
         type={inputType}
         onFocus={(e) => {
           setFocused(true);

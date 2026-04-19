@@ -66,8 +66,8 @@ export class GameModesController {
   @Delete(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Удалить режим (админ)' })
+  @Roles(Role.ADMIN, Role.MANAGER)
+  @ApiOperation({ summary: 'Удалить режим (админ / менеджер)' })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.gameModesService.remove(id);
   }

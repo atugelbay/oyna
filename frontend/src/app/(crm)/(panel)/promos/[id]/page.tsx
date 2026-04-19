@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { promosService } from "@/services/promos.service";
 import { readApiUserError } from "@/lib/api-error-message";
+import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
 
 type PromoDetail = {
   id: string;
@@ -37,6 +38,7 @@ export default function PromoDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { confirmDelete, dialog: deleteDialog } = useConfirmDelete();
 
   useEffect(() => {
     if (!id) return;
@@ -62,10 +64,13 @@ export default function PromoDetailPage() {
 
   async function handleDelete() {
     if (deleting) return;
-    if (!id) return;
+    if (!id || !p) return;
 
     setActionError(null);
-    const ok = window.confirm("Удалить эту акцию?");
+    const ok = await confirmDelete({
+      title: "Удалить акцию?",
+      message: `Акция «${p.title}» будет удалена безвозвратно.`,
+    });
     if (!ok) return;
 
     setDeleting(true);
@@ -111,9 +116,12 @@ export default function PromoDetailPage() {
           О акции
         </Link>
         <div className="flex gap-2">
-          <button type="button" className="px-4 py-2 rounded-lg border border-surface-border text-text-primary text-sm font-medium hover:bg-bg-card">
+          <Link
+            href={`/promos/${id}/edit`}
+            className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-card"
+          >
             Изменить
-          </button>
+          </Link>
           <button
             type="button"
             onClick={handleDelete}
@@ -190,6 +198,7 @@ export default function PromoDetailPage() {
           </div>
         </div>
       </div>
+      {deleteDialog}
     </div>
   );
 }

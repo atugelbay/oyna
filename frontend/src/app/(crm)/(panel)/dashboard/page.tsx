@@ -5,7 +5,16 @@ import Link from "next/link";
 import axios from "axios";
 import { statsService } from "@/services/stats.service";
 import { gameSessionsService } from "@/services/game-sessions.service";
-import { ChevronRight, CirclePlus, Pause, Play, Plus, Square, UserRound } from "lucide-react";
+import {
+  ChevronRight,
+  CirclePlus,
+  CircleStop,
+  Pause,
+  Play,
+  Plus,
+  Square,
+  UserRound,
+} from "lucide-react";
 import { Paper } from "@mui/material";
 import { createPortal } from "react-dom";
 import { Input, Button } from "@/components/ui";
@@ -198,6 +207,8 @@ export default function DashboardPage() {
     color: CHART_COLORS[i % CHART_COLORS.length],
   }));
   const totalChart = sessionsByRoom.reduce((s, r) => s + r.count, 0);
+  const totalSessionsCount = data?.totalSessions ?? 0;
+  const hasSessionStats = totalSessionsCount > 0 || totalChart > 0;
   const rooms = (data?.rooms ?? []).map(normalizeDashboardRoom);
 
   return (
@@ -210,21 +221,35 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-7 flex flex-col gap-6 w-full min-w-0">
           <Paper className="w-full min-w-0 rounded-2xl p-5 h-fit" sx={{ backgroundColor: dashboardContainerFill }}>
-            <h2 className="text-sm font-medium text-white mb-4">Количество сессий</h2>
-            <div className="flex flex-wrap items-center gap-5">
-              <span className="text-5xl font-black text-white tabular-nums shrink-0">
-                {data?.totalSessions ?? 0}
-              </span>
-              <DonutChart data={sessionsByRoom} total={totalChart} size={80} />
-              <div className="flex flex-wrap gap-x-5 gap-y-1.5 min-w-0">
-                {sessionsByRoom.map((r) => (
-                  <div key={r.roomId ?? r.name} className="flex items-center gap-1.5 text-xs text-[#D5E6F7] whitespace-nowrap">
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
-                    <span>{r.name}: <b>{r.count}</b></span>
-                  </div>
-                ))}
+            <h2 className="text-sm font-medium text-text-secondary mb-4">Количество сессий</h2>
+            {hasSessionStats ? (
+              <div className="flex flex-wrap items-center gap-5">
+                <span className="text-5xl font-black text-white tabular-nums shrink-0">{totalSessionsCount}</span>
+                <DonutChart data={sessionsByRoom} total={totalChart} size={80} />
+                <div className="flex flex-wrap gap-x-5 gap-y-1.5 min-w-0">
+                  {sessionsByRoom.map((r) => (
+                    <div
+                      key={r.roomId ?? r.name}
+                      className="flex items-center gap-1.5 text-xs text-[#D5E6F7] whitespace-nowrap"
+                    >
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                      <span>
+                        {r.name}: <b>{r.count}</b>
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-5 sm:gap-6">
+                <span className="shrink-0 text-5xl font-black tabular-nums text-white">0</span>
+                <DonutChart data={[]} total={0} size={80} />
+                <div className="min-w-0">
+                  <p className="text-base font-semibold leading-snug text-white">Сегодня сессий нет.</p>
+                  <p className="mt-1 text-sm leading-snug text-text-secondary">Они появятся здесь по каждой комнате</p>
+                </div>
+              </div>
+            )}
           </Paper>
 
           <Paper className="w-full min-w-0 rounded-2xl p-6 h-fit" sx={{ backgroundColor: dashboardContainerFill }}>
@@ -662,7 +687,8 @@ function RoomStatusRow({
     ? room.sessionPlayerUserIds
     : [];
 
-  const handleCompleteSession = async () => {
+  /** Завершить активную сессию: списание за фактическое время (как «Завершить» по таймеру, так и «Стоп» вручную). */
+  const handleFinalizeSession = async () => {
     if (!sessionId || busy) return;
     if (!canCountdown || room.levelDurationSeconds == null || remainingSeconds == null) return;
     if (playerUserIdsForEnd.length < 1) return;
@@ -706,7 +732,7 @@ function RoomStatusRow({
     if (!isOccupied || !sessionId) return;
 
     if (canCountdown && timeIsUp) {
-      await handleCompleteSession();
+      await handleFinalizeSession();
       return;
     }
 
@@ -734,6 +760,14 @@ function RoomStatusRow({
   const occupiedShowComplete = Boolean(isOccupied && sessionId && canCountdown && timeIsUp);
   const occupiedPaused = Boolean(isOccupied && sessionId && room.pausedAt && !timeIsUp);
   const occupiedRunning = Boolean(isOccupied && sessionId && !room.pausedAt && canCountdown && !timeIsUp);
+
+  const sessionEndBlocked =
+    busy ||
+    !sessionId ||
+    (hydratingSession && !canCountdown) ||
+    playerUserIdsForEnd.length < 1 ||
+    !canCountdown ||
+    remainingSeconds === null;
 
   const occupiedLabel = (() => {
     if (!isOccupied) return "";
@@ -789,6 +823,18 @@ function RoomStatusRow({
               Игроки: <span className="text-white">{formatWaitingPlayersLine(inGameNames)}</span>
             </span>
             <div className="flex flex-wrap items-center justify-end gap-2">
+              {!occupiedShowComplete ? (
+                <button
+                  type="button"
+                  disabled={sessionEndBlocked}
+                  onClick={() => void handleFinalizeSession()}
+                  title="Полностью остановить комнату и завершить сессию (списание за сыгранное время)"
+                  className="inline-flex min-h-[2.25rem] min-w-[6.5rem] items-center justify-center gap-1.5 rounded-full border border-danger/55 bg-transparent px-3 py-1.5 text-sm font-medium text-danger transition-opacity hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <CircleStop className="h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap">Стоп</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 disabled={

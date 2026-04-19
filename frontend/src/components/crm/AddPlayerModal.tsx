@@ -5,15 +5,46 @@ import { createPortal } from "react-dom";
 import { Input, Button, PhoneInput } from "@/components/ui";
 import { readApiUserError } from "@/lib/api-error-message";
 import { authService } from "@/services/auth.service";
+import { playersService } from "@/services/players.service";
+
+export type EditPlayerPayload = {
+  id: string;
+  phone: string;
+  nickname: string;
+  name: string;
+  birthDate?: string | null;
+};
 
 interface AddPlayerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Вызывается после успешной регистрации с id нового игрока */
+  /** После успешной регистрации */
   onAdded?: (playerId: string) => void;
+  /** Режим редактирования */
+  editPlayer?: EditPlayerPayload | null;
+  onUpdated?: () => void;
 }
 
-export function AddPlayerModal({ isOpen, onClose, onAdded }: AddPlayerModalProps) {
+function toDateInputValue(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
+
+function subscriberDigitsFromPhone(phone: string): string {
+  const d = String(phone || "").replace(/\D/g, "");
+  if (d.length >= 11 && d.startsWith("7")) return d.slice(1, 11);
+  return d.slice(-10);
+}
+
+export function AddPlayerModal({
+  isOpen,
+  onClose,
+  onAdded,
+  editPlayer,
+  onUpdated,
+}: AddPlayerModalProps) {
   const [mounted, setMounted] = useState(false);
   const [phone, setPhone] = useState("");
   const [nickname, setNickname] = useState("");
@@ -22,29 +53,69 @@ export function AddPlayerModal({ isOpen, onClose, onAdded }: AddPlayerModalProps
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const isEdit = !!editPlayer;
+
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setError(null);
+    setSubmitting(false);
+
+    if (editPlayer) {
+      setPhone(subscriberDigitsFromPhone(editPlayer.phone));
+      setNickname(editPlayer.nickname);
+      setName(editPlayer.name);
+      setBirthday(toDateInputValue(editPlayer.birthDate ?? undefined));
+    } else {
+      setPhone("");
+      setNickname("");
+      setName("");
+      setBirthday("");
+    }
+  }, [isOpen, editPlayer]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
-    const phoneDigits = String(phone || "").replace(/\D/g, "");
     const trimmedNickname = String(nickname || "").trim();
     const trimmedName = String(name || "").trim();
     const birthDate = birthday || undefined;
 
-    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
-      setError("Проверьте номер телефона");
-      return;
-    }
     if (trimmedNickname.length < 2) {
       setError("Укажите никнейм (минимум 2 символа)");
       return;
     }
     if (!trimmedName) {
       setError("Укажите ФИО");
+      return;
+    }
+
+    if (isEdit && editPlayer) {
+      setSubmitting(true);
+      playersService
+        .update(editPlayer.id, {
+          nickname: trimmedNickname,
+          name: trimmedName,
+          birthDate,
+        })
+        .then(() => {
+          onUpdated?.();
+          onClose();
+        })
+        .catch((err: unknown) => {
+          setError(readApiUserError(err, "Не удалось сохранить игрока"));
+        })
+        .finally(() => setSubmitting(false));
+      return;
+    }
+
+    const phoneDigits = String(phone || "").replace(/\D/g, "");
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      setError("Проверьте номер телефона");
       return;
     }
 
@@ -105,11 +176,17 @@ export function AddPlayerModal({ isOpen, onClose, onAdded }: AddPlayerModalProps
                 <BackIcon />
               </button>
               <h2 id="add-player-title" className="text-lg font-semibold text-white">
-                Добавление игрока
+                {isEdit ? "Редактирование игрока" : "Добавление игрока"}
               </h2>
             </div>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <PhoneInput label="Номер телефона" value={phone} onChange={setPhone} />
+              <PhoneInput
+                label="Номер телефона"
+                value={phone}
+                onChange={setPhone}
+                disabled={isEdit}
+                className={isEdit ? "opacity-70" : undefined}
+              />
               <Input
                 label="Никнейм"
                 type="text"
@@ -131,7 +208,7 @@ export function AddPlayerModal({ isOpen, onClose, onAdded }: AddPlayerModalProps
               {error ? <p className="text-danger text-sm">{error}</p> : null}
               <Button type="submit" className="mt-2 inline-flex w-fit items-center justify-center gap-2">
                 <CheckIcon />
-                {submitting ? "Добавление..." : "Добавить"}
+                {submitting ? (isEdit ? "Сохранение..." : "Добавление...") : isEdit ? "Сохранить" : "Добавить"}
               </Button>
             </form>
           </div>

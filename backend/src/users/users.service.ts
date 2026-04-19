@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -44,6 +48,7 @@ export class UsersService {
       const idRows = await this.prisma.$queryRaw<{ id: string }[]>`
         SELECT u.id FROM "users" u
         WHERE u.role = ${Role.USER}::"Role"
+        AND u."isActive" = true
         AND u."birthDate" IS NOT NULL
         AND EXTRACT(MONTH FROM u."birthDate") = ${month}
         AND EXTRACT(DAY FROM u."birthDate") = ${day}
@@ -55,6 +60,7 @@ export class UsersService {
       const countRows = await this.prisma.$queryRaw<[{ c: bigint }]>`
         SELECT COUNT(*)::bigint AS c FROM "users" u
         WHERE u.role = ${Role.USER}::"Role"
+        AND u."isActive" = true
         AND u."birthDate" IS NOT NULL
         AND EXTRACT(MONTH FROM u."birthDate") = ${month}
         AND EXTRACT(DAY FROM u."birthDate") = ${day}
@@ -76,7 +82,7 @@ export class UsersService {
       }
 
       const users = await this.prisma.user.findMany({
-        where: { id: { in: ids }, role: Role.USER },
+        where: { id: { in: ids }, role: Role.USER, isActive: true },
         include: { balance: true, sessions: true },
       });
       const order = new Map(ids.map((id, i) => [id, i]));
@@ -93,7 +99,10 @@ export class UsersService {
       };
     }
 
-    const conditions: Prisma.UserWhereInput[] = [{ role: Role.USER }];
+    const conditions: Prisma.UserWhereInput[] = [
+      { role: Role.USER },
+      { isActive: true },
+    ];
     if (qTrim) {
       conditions.push({
         OR: [
@@ -128,7 +137,15 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto) {
-    await this.findById(id);
+    const existing = await this.prisma.user.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+    if (dto.isActive === false && existing.role !== Role.USER) {
+      throw new BadRequestException(
+        'Отключать можно только игровой аккаунт (игрок)',
+      );
+    }
 
     const user = await this.prisma.user.update({
       where: { id },
