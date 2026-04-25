@@ -1,0 +1,63 @@
+sequenceDiagram
+    autonumber
+    participant U as UE
+    participant M as Middleware
+    participant DB as SQLite buffer
+    participant I as Internet
+    participant B as Backend
+
+    Note over U,B: Scenario: Internet dies mid-session, recovers later
+
+    Note over U: Session active, level 1 in progress
+    U--)M: match_started {level: 1}
+    M->>DB: INSERT pending_events
+    M->>B: POST /matches ✓ 201
+    M->>DB: mark sent
+
+    Note over I: 🔴 Internet connection lost
+
+    U--)M: life_lost {laserId: 23, livesRemaining: 2}
+    M->>DB: INSERT pending_events
+    M->>B: POST (attempt 1)
+    B-->>M: TIMEOUT (30s)
+    M->>DB: attempts++, last_attempt_at=NOW
+    Note over M: backoff 1s
+
+    M->>B: POST (attempt 2)
+    B-->>M: TIMEOUT
+    M->>DB: attempts++
+    Note over M: backoff 2s
+
+    Note over U: Player continues playing.<br/>UE doesn't know about internet outage.<br/>Middleware works as usual, just buffers events.
+
+    U--)M: match_completed {level: 1, score: 1920}
+    M->>DB: INSERT pending_events (offline)
+
+    U--)M: match_started {level: 2}
+    M->>DB: INSERT
+
+    U--)M: match_completed {level: 2, score: 1500}
+    M->>DB: INSERT
+
+    Note over I: ✅ Internet restored (5 minutes later)
+
+    M->>DB: SELECT * WHERE sent_at IS NULL ORDER BY id
+    Note right of DB: Returns 5 events in order:<br/>1. life_lost<br/>2. match_completed L1<br/>3. match_started L2<br/>4. match_completed L2<br/>5. (etc)
+
+    loop For each buffered event
+        M->>B: POST with Idempotency-Key
+        B-->>M: 201 or 200 (OK)
+        M->>DB: UPDATE sent_at=NOW
+    end
+
+    Note over U,B: All events delivered. Backend has full timeline.<br/>Order preserved via id (auto-increment).
+
+    Note over U: Session eventually ends
+    U--)M: session_ended {reason: "time_elapsed"}
+    M->>DB: INSERT
+    M->>B: POST /sessions/{id}/end ✓
+    B->>B: Calculate rating
+    B-->>M: 200 {ratingDelta}
+    M->>DB: mark sent
+
+    Note over M: All events delivered despite outage.<br/>Player got correct rating.

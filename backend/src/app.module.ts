@@ -14,6 +14,7 @@ import { PromosModule } from './promos/promos.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { StatsModule } from './stats/stats.module';
 import { SettingsModule } from './settings/settings.module';
+import { StationModule } from './station/station.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { SettingsModule } from './settings/settings.module';
     TournamentsModule,
     StatsModule,
     SettingsModule,
+    StationModule,
   ],
 })
 export class AppModule {}

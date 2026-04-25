@@ -1,5 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, Matches } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class RequestOtpDto {
   @ApiProperty({ example: '+77001234567', description: 'Номер телефона' })
@@ -21,4 +27,25 @@ export class VerifyOtpDto {
   code: string;
 }
 
+export class CrmLoginDto {
+  @ApiProperty({ example: '+77000000001', description: 'Телефон сотрудника' })
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+
+  @ApiPropertyOptional({ example: 'admin123', description: 'Пароль сотрудника' })
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @ApiPropertyOptional({ description: 'Код доступа сотрудника' })
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  isEmployee?: boolean;
+}
 

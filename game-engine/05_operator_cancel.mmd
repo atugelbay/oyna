@@ -1,0 +1,55 @@
+sequenceDiagram
+    autonumber
+    participant P1 as Player 1<br/>(mobile)
+    participant P2 as Player 2<br/>(mobile)
+    participant O as Operator
+    participant B as Backend
+    participant M as Middleware
+    participant U as UE
+
+    Note over P1,U: Scenario: Session active, operator cancels mid-game<br/>(e.g., emergency, technical issue, wrong room assignment)
+
+    Note over U: Session ACTIVE, Level 1 in progress
+    Note over B: 2 players in session, each paid 10 minutes
+
+    O->>B: POST /sessions/{id}/cancel {reason: "technical_issue"}
+    B->>B: BEGIN TRANSACTION
+    B->>B: session.status → CANCELLED
+    B->>B: session.endedAt = NOW
+    B->>B: session.endReason = OPERATOR_CANCELLED
+
+    Note over B: Refund all players
+
+    B->>B: For each MatchPlayer in session:
+    loop Each player
+        B->>B: INSERT Transaction (type=refund, amount=10, sessionId)
+        B->>B: UPDATE user.balanceMinutes += 10
+    end
+
+    B->>B: COMMIT
+
+    par Notify operator
+        B-->>O: 200 {refundedMinutes: 20, affectedUsers: 2}
+    and Stop game
+        B--)M: WS push: session_cancel<br/>{reason: "operator_request"}
+        M--)U: session_cancel
+        U->>U: Stop current level immediately
+        U->>U: Hide HUD
+        U->>U: Show "Session cancelled by operator"<br/>screen (10 sec)
+        U->>U: Return to Idle
+    and Notify players
+        B--)P1: WS or push: {event: session_cancelled, refund: 10}
+        P1->>P1: Show "Session cancelled. 10 minutes refunded."
+        B--)P2: WS or push
+        P2->>P2: Show refund notification
+    end
+
+    Note over U: UE receives confirmation, shuts down cleanly
+    U--)M: session_ended {reason: "cancelled"}
+    M->>B: POST /sessions/{id}/end<br/>(Idempotency: sess-end)
+
+    alt Session already COMPLETED on backend (cancel was first)
+        B-->>M: 200 {status: CANCELLED (unchanged), ratingDelta: null}
+    end
+
+    Note over U,B: No rating calculated for cancelled sessions.<br/>Players have full balance refund.<br/>Matches data preserved for debug, but marked as "session_ended" fail reason.

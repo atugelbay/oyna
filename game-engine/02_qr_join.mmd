@@ -1,0 +1,65 @@
+sequenceDiagram
+    autonumber
+    participant P as Player<br/>(mobile)
+    participant W as WebClient<br/>oyna.pro
+    participant B as Backend
+    participant M as Middleware
+    participant U as UE
+
+    Note over P,U: QR join flow — игрок скан QR, попадает в сессию
+
+    Note over U: QR code visible on game monitor<br/>(joinCode: 7AB-KZ9)
+
+    P->>P: Open camera, scan QR
+    P->>W: GET https://oyna.pro/join/7AB-KZ9
+
+    alt User not logged in
+        W->>P: Redirect to /login?return=/join/7AB-KZ9
+        P->>W: POST /auth/login {email, password}
+        W->>B: POST /api/v1/auth/login
+        B-->>W: 200 {jwt}
+        W->>P: Redirect back to /join/7AB-KZ9
+    end
+
+    W->>W: Display session info preview:<br/>"Join OYNA Laser Matrix?"<br/>"Cost: 10 minutes"<br/>"Your balance: 30 minutes"
+    P->>W: Tap "Join"
+
+    W->>B: POST /api/v1/users/me/join-session<br/>{joinCode: "7AB-KZ9"}
+    B->>B: Find session by joinCode
+    B->>B: Lock user row (FOR UPDATE)
+
+    alt Session not found
+        B-->>W: 404 {error: "SESSION_NOT_FOUND"}
+        W->>P: Show error "Session not available"
+    else Session full (6 players max)
+        B-->>W: 409 {error: "SESSION_FULL"}
+        W->>P: Show error "Room is full"
+    else User already in session
+        B-->>W: 409 {error: "ALREADY_JOINED"}
+        W->>P: Show current session status
+    else Insufficient balance
+        B-->>W: 402 {error: "INSUFFICIENT_BALANCE", balance: 5, required: 10}
+        W->>P: Show error + "Top up balance"
+    else Session status != WAITING
+        B-->>W: 409 {error: "SESSION_NOT_AVAILABLE", status: "ACTIVE"}
+        W->>P: Show error "Session already started"
+    else Success
+        B->>B: BEGIN TRANSACTION
+        B->>B: Find free slot (0..5)
+        B->>B: INSERT MatchPlayer
+        B->>B: INSERT Transaction (type=deduction, amount=10)
+        B->>B: UPDATE user.balanceMinutes -= 10
+        B->>B: COMMIT
+        B-->>W: 200 {slot: 0, balanceAfter: 20}
+
+        par Push to game
+            B--)M: WS push: player_joined<br/>{sessionId, slot, userId, displayName}
+            M--)U: player_joined
+            U->>U: Show player name + color at slot
+        and Notify player
+            W->>P: Show "Joined slot 0"
+            W->>P: Display "Waiting for operator to start..."
+        end
+    end
+
+    Note over P,U: Player remains on phone screen until operator starts game

@@ -4,19 +4,38 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { BalanceService } from '../balance/balance.service';
+import { RoomAgentCommandsService } from '../station/room-agent-commands.service';
 import { StartSessionDto } from './dto/start-session.dto';
 import { EndSessionDto } from './dto/end-session.dto';
-import { SessionStatus, TransactionType, TransactionSource } from '@prisma/client';
+import {
+  Prisma,
+  SessionStatus,
+  TransactionType,
+  TransactionSource,
+} from '@prisma/client';
 
 /** Минимум на балансе у каждого игрока для старта сессии (10 мин) */
 const MIN_BALANCE_SECONDS = 600;
+
+function mapModeToEngineString(modeName: string): string {
+  const n = modeName.toLowerCase();
+  if (n.includes('chaos') || n.includes('хаос')) return 'chaos';
+  if (n.includes('dynamic') || n.includes('динам')) return 'dynamic';
+  return 'classic';
+}
+
+function engineEvent(
+  event: string,
+  payload: Record<string, unknown>,
+): Prisma.InputJsonObject {
+  return { event, ...payload };
+}
 
 @Injectable()
 export class GameSessionsService {
   constructor(
     private prisma: PrismaService,
-    private balanceService: BalanceService,
+    private roomAgentCommands: RoomAgentCommandsService,
   ) {}
 
   /** CRM может передать primary key или sessionToken (оба uuid) */
@@ -79,6 +98,27 @@ export class GameSessionsService {
       },
     });
 
+    await this.roomAgentCommands.enqueue(
+      session.roomId,
+      'session_created',
+      engineEvent('session_created', {
+        session_id: session.id,
+        session_token: session.sessionToken,
+        station_id: session.roomId,
+        mode: mapModeToEngineString(session.mode.name),
+        level: 1,
+        max_players: session.room.maxPlayers,
+        duration_seconds: MIN_BALANCE_SECONDS,
+        waiting_timeout_seconds: MIN_BALANCE_SECONDS,
+        players: session.players.map((p, i) => ({
+          slot: i,
+          user_id: p.user.id,
+          display_name: p.user.nickname ?? p.user.name ?? p.userId,
+        })),
+      }),
+      session.id,
+    );
+
     return {
       sessionId: session.id,
       sessionToken: session.sessionToken,
@@ -96,6 +136,14 @@ export class GameSessionsService {
   async activateSession(sessionToken: string) {
     const session = await this.prisma.gameSession.findUnique({
       where: { sessionToken },
+      include: {
+        mode: true,
+        players: {
+          include: {
+            user: { select: { id: true, nickname: true, name: true } },
+          },
+        },
+      },
     });
 
     if (!session) throw new NotFoundException('Сессия не найдена');
@@ -103,13 +151,42 @@ export class GameSessionsService {
       throw new BadRequestException('Сессия уже запущена или завершена');
     }
 
-    return this.prisma.gameSession.update({
+    const updated = await this.prisma.gameSession.update({
       where: { id: session.id },
       data: {
         status: SessionStatus.ACTIVE,
         startTime: new Date(),
       },
+      include: {
+        mode: true,
+        players: {
+          include: {
+            user: { select: { id: true, nickname: true, name: true } },
+          },
+        },
+      },
     });
+
+    await this.roomAgentCommands.enqueue(
+      updated.roomId,
+      'session_start',
+      engineEvent('session_start', {
+        session_id: updated.id,
+        // The current UE code can start directly from this root-level shape.
+        mode: mapModeToEngineString(updated.mode.name),
+        level: 1,
+        countdown_seconds: 3,
+        players: updated.players.map((p, i) => ({
+          slot: i,
+          user_id: p.userId,
+          display_name: p.user.nickname ?? p.user.name ?? '',
+          color: '#88AAFF',
+        })),
+      }),
+      updated.id,
+    );
+
+    return updated;
   }
 
   async pauseActiveSession(sessionId: string) {
@@ -124,10 +201,20 @@ export class GameSessionsService {
     if (session.pausedAt) {
       throw new BadRequestException('Сессия уже на паузе');
     }
-    return this.prisma.gameSession.update({
+    const row = await this.prisma.gameSession.update({
       where: { id: session.id },
       data: { pausedAt: new Date() },
     });
+    await this.roomAgentCommands.enqueue(
+      row.roomId,
+      'session_pause',
+      engineEvent('session_pause', {
+        session_id: row.id,
+        reason: 'operator_request',
+      }),
+      row.id,
+    );
+    return row;
   }
 
   async resumeActiveSession(sessionId: string) {
@@ -141,13 +228,20 @@ export class GameSessionsService {
     }
     const deltaMs = Date.now() - session.pausedAt.getTime();
     const newStart = new Date(session.startTime.getTime() + deltaMs);
-    return this.prisma.gameSession.update({
+    const row = await this.prisma.gameSession.update({
       where: { id: session.id },
       data: {
         pausedAt: null,
         startTime: newStart,
       },
     });
+    await this.roomAgentCommands.enqueue(
+      row.roomId,
+      'session_resume',
+      engineEvent('session_resume', { session_id: row.id }),
+      row.id,
+    );
+    return row;
   }
 
   /** Отмена лобби в ожидании (CRM) */
@@ -157,10 +251,20 @@ export class GameSessionsService {
     if (session.status !== SessionStatus.PENDING) {
       throw new BadRequestException('Отменить можно только сессию в ожидании');
     }
-    return this.prisma.gameSession.update({
+    const row = await this.prisma.gameSession.update({
       where: { id: session.id },
       data: { status: SessionStatus.CANCELLED },
     });
+    await this.roomAgentCommands.enqueue(
+      row.roomId,
+      'session_cancel',
+      engineEvent('session_cancel', {
+        session_id: row.id,
+        reason: 'operator_cancel',
+      }),
+      row.id,
+    );
+    return row;
   }
 
   async endSession(sessionId: string, dto: EndSessionDto) {
@@ -173,8 +277,30 @@ export class GameSessionsService {
     });
 
     if (!session) throw new NotFoundException('Сессия не найдена');
+
     if (session.status === SessionStatus.COMPLETED) {
-      throw new BadRequestException('Сессия уже завершена');
+      const scores = await this.prisma.score.findMany({
+        where: { sessionId: session.id },
+        select: { userId: true, score: true },
+      });
+      return {
+        sessionId: session.id,
+        status: SessionStatus.COMPLETED,
+        deductedSeconds: session.deductedSeconds,
+        scores: scores.map((s) => ({
+          userId: s.userId,
+          score: s.score,
+        })),
+      };
+    }
+
+    const allowedUserIds = new Set(session.players.map((p) => p.userId));
+    for (const r of dto.results) {
+      if (!allowedUserIds.has(r.userId)) {
+        throw new BadRequestException(
+          `Игрок ${r.userId} не входит в состав этой сессии`,
+        );
+      }
     }
 
     const pk = session.id;

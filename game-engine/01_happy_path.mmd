@@ -1,0 +1,94 @@
+sequenceDiagram
+    autonumber
+    participant P as Player<br/>(mobile)
+    participant W as WebClient<br/>oyna.pro
+    participant O as Operator<br/>(admin)
+    participant B as Backend<br/>CRM
+    participant M as Middleware<br/>(Room Agent)
+    participant U as UE<br/>(Game Client)
+
+    Note over O,U: Сценарий: 2 игрока, Classic режим, 10-минутная сессия
+
+    %% 1. Topup
+    O->>B: POST /admin/users/{id}/topup {minutes: 20, price: 2000}
+    B->>B: user.balanceMinutes += 20
+    B-->>O: 201 {transactionId, balanceAfter: 20}
+
+    %% 2. Create session
+    O->>B: POST /sessions {stationId, mode: "classic"}
+    B->>B: Create session (status=CREATED)
+    B-->>O: 201 {sessionId, joinCode, qrImageUrl}
+    B--)M: WS push: session_created
+    M--)U: session_created
+    U->>U: Show QR on screen
+    U--)M: qr_shown
+    M->>B: POST /sessions/{id}/confirm-qr-shown
+    B->>B: status → WAITING
+
+    %% 3. Players scan QR
+    P->>W: Open /join/{joinCode}
+    W->>W: Login user
+    W->>B: POST /users/me/join-session {joinCode}
+    B->>B: Check balance >= 10
+    B->>B: transaction (deduction, 10 min)
+    B->>B: Create MatchPlayer (slot=0)
+    B-->>W: 200 {slot: 0, balanceAfter: 10}
+    B--)M: WS push: player_joined (slot=0)
+    M--)U: player_joined
+    U->>U: Show "Aybar" at slot 0
+
+    Note over P,U: (Второй игрок то же самое, slot=1)
+
+    %% 4. Operator starts
+    O->>B: POST /sessions/{id}/start
+    B->>B: status → STARTING
+    B-->>O: 200 {status: STARTING, players: [...]}
+    B--)M: WS push: session_start
+    M--)U: session_start {countdownSeconds: 3, players: [...]}
+    U->>U: Show 3-2-1 Countdown
+    U--)M: countdown_started
+    M->>B: (not critical, just log)
+
+    %% 5. Playing
+    Note over U: Game loop: level 1
+    U->>U: Start level 1 (90 sec timer)
+    U--)M: match_started {level: 1, attemptNumber: 1}
+    M->>B: POST /sessions/{id}/matches (201 created)
+
+    Note over U: Players pass level 1 in 42 sec
+    U->>U: OnLevelComplete {score: 1920, livesLeft: 3}
+    U--)M: match_completed {level: 1, score: 1920, bVictory: true}
+    M->>B: POST /sessions/{id}/matches (Idempotency-Key: sess-L1-A1)
+    B-->>M: 201 {matchId, created: true}
+
+    Note over U: 5-sec break, then level 2
+    U->>U: Start level 2
+    U--)M: match_started {level: 2}
+    M->>B: POST /matches
+
+    Note over U: Players pass level 2, total time 7.5 min
+    U->>U: OnLevelComplete
+    U--)M: match_completed {level: 2, score: 1500, bVictory: true}
+    M->>B: POST /matches
+
+    Note over U: Level 3 starts but session timer kills it
+    U->>U: Start level 3 (1 min remaining in session)
+    U--)M: match_started {level: 3}
+    M->>B: POST /matches
+
+    Note over U: Session timer reaches 0
+    U->>U: Session timeout, level 3 marked as failed
+    U--)M: match_completed {level: 3, score: 0, bVictory: false, failReason: "session_ended"}
+    M->>B: POST /matches
+
+    %% 6. Session end
+    U--)M: session_ended {reason: "time_elapsed", matchesPlayed: 3, totalScore: 3420}
+    M->>B: POST /sessions/{id}/end (Idempotency-Key: sess-end)
+    B->>B: Calculate rating for each player
+    B->>B: Update user_rating (all_time, monthly, daily)
+    B->>B: Insert rating_events (for per-venue aggregation)
+    B->>B: status → COMPLETED
+    B-->>M: 200 {ratingDelta: {user1: +280, user2: +280}}
+    M--)U: (optional) session_summary with rating delta
+    U->>U: Show Session Summary screen (5 sec)
+    U->>U: Return to idle, ready for next session

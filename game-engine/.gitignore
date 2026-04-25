@@ -1,0 +1,18 @@
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+*.sln
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.suo
+*.user
+*.log
+*.uba
+
+# Research/survey drafts — kept locally
+/INTEGRATION_SURVEY.md
+/PARSER_SURVEY.md

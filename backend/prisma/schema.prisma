@@ -155,13 +155,19 @@ model Room {
   maxPlayers           Int    @default(5)
   defaultLevelDuration Int    @default(120)
 
+  /** bcrypt hash плоского ключа станции (Room Agent → /api/station/...) */
+  stationApiKeyHash     String?
+  lastHeartbeatAt       DateTime?
+  heartbeatBuildVersion String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  venue    Venue      @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  modes    GameMode[]
-  sessions GameSession[]
-  scores   Score[]
+  venue         Venue               @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  modes         GameMode[]
+  sessions      GameSession[]
+  scores        Score[]
+  agentCommands RoomAgentCommand[]
 
   @@map("rooms")
 }
@@ -222,12 +228,48 @@ model GameSession {
   room    Room              @relation(fields: [roomId], references: [id])
   mode    GameMode          @relation(fields: [modeId], references: [id])
   venue   Venue             @relation(fields: [venueId], references: [id])
-  players GameSessionPlayer[]
-  scores  Score[]
+  players       GameSessionPlayer[]
+  scores        Score[]
+  agentCommands RoomAgentCommand[]
+  matchReports  SessionMatchReport[]
 
   @@index([sessionToken])
   @@index([status])
   @@map("game_sessions")
+}
+
+/** Очередь команд CRM → Room Agent (long-poll / polling). */
+model RoomAgentCommand {
+  id          String    @id @default(uuid())
+  roomId      String
+  sessionId   String?
+  type        String
+  payload     Json
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+
+  room    Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  session GameSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, deliveredAt])
+  @@map("room_agent_commands")
+}
+
+/** Идемпотентный приём отчёта об уровне от агента (дедуп по session+level+attempt). */
+model SessionMatchReport {
+  id              String   @id @default(uuid())
+  sessionId       String
+  level           Int
+  attemptNumber   Int
+  result          Json
+  durationSeconds Int?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  session GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, level, attemptNumber])
+  @@map("session_match_reports")
 }
 
 model GameSessionPlayer {

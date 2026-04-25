@@ -32,6 +32,16 @@ async function bootstrap() {
     .setDescription('API для системы управления игровыми центрами OYNA')
     .setVersion('1.0')
     .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'Station API Key',
+        description:
+          'Плоский ключ станции (задаётся POST /rooms/:id/station-api-key). Только для /station/...',
+      },
+      'StationApiKey',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

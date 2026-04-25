@@ -1,0 +1,54 @@
+sequenceDiagram
+    autonumber
+    participant U as UE
+    participant M as Middleware
+    participant DB as Middleware<br/>SQLite buffer
+    participant B as Backend
+    participant PG as PostgreSQL
+
+    Note over U,PG: match_completed with idempotency + offline buffer
+
+    Note over U: Player just finished Level 1
+
+    U->>U: Generate idempotency key:<br/>"sess_abc-L1-A1" (sessionId + level + attempt)
+    U--)M: match_completed payload
+
+    M->>DB: INSERT INTO pending_events<br/>(idempotency_key, payload, attempts=0)
+
+    alt Backend online
+        M->>B: POST /sessions/{id}/matches<br/>Header: Idempotency-Key: sess_abc-L1-A1
+
+        alt First time (not seen before)
+            B->>PG: BEGIN
+            B->>PG: SELECT match WHERE idempotency_key=?
+            Note over B: row not found
+            B->>PG: INSERT Match (level=1, score=1920, ...)
+            B->>PG: COMMIT
+            B-->>M: 201 Created {matchId, created: true}
+            M->>DB: UPDATE pending_events SET sent_at=NOW()
+        else Duplicate request (e.g. retry after network glitch)
+            B->>PG: SELECT match WHERE idempotency_key=?
+            Note over B: row EXISTS
+            B-->>M: 200 OK {matchId (existing), created: false}
+            M->>DB: UPDATE pending_events SET sent_at=NOW()
+        end
+
+    else Backend offline / 5xx error
+        B-->>M: Network timeout OR 503
+        M->>DB: UPDATE pending_events SET attempts+=1, last_attempt_at=NOW()
+        Note over M: wait backoff (1s, 2s, 4s, 8s...)
+
+        loop Every 5 seconds
+            M->>DB: SELECT pending_events WHERE sent_at IS NULL
+            alt Events pending
+                M->>B: Retry POST with same Idempotency-Key
+                B->>PG: Check + INSERT or return existing
+                B-->>M: 200 OK
+                M->>DB: UPDATE sent_at=NOW()
+            end
+        end
+    end
+
+    Note over U,PG: Player continues playing Level 2 regardless<br/>(UE doesn't wait for backend ack)
+
+    Note over M,B: Critical: match_completed is idempotent at backend level<br/>Duplicate send = no duplicate rating points

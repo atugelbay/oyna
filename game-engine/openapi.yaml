@@ -1,0 +1,1042 @@
+openapi: 3.1.0
+info:
+  title: OYNA Lasers CRM API
+  version: "1.0.0"
+  description: |
+    Backend API для интеграции с игровым движком OYNA Lasers.
+
+    **Актуальные пути NestJS** (префикс `/api` на сервере): сводная таблица в [CRM_ENGINE_MAPPING.md](CRM_ENGINE_MAPPING.md).
+    Секция `paths` ниже начинается с реализованных маршрутов; блоки `/sessions`, `/users`, `/rating` — целевой draft (ещё не все совпадают с репозиторием oyna).
+
+    Три группы вызовов:
+      1. Room Agent → Backend (`StationApiKey`) — heartbeat, очередь команд, match-reports
+      2. CRM UI → Backend (JWT оператора) — game-sessions, rooms
+      3. Команды CRM → агент — через очередь `GET /station/rooms/{roomId}/commands` (polling)
+  contact:
+    name: Azamat
+    url: https://oyna.pro
+
+servers:
+  - url: http://localhost:3000/api
+    description: Локальный Nest (Swagger /api/docs)
+  - url: https://api.oyna.pro/api
+    description: Production (при деплое с глобальным префиксом /api)
+
+tags:
+  - name: game-sessions
+    description: Реализовано в Nest — игровые сессии (JWT)
+  - name: station
+    description: Реализовано — Room Agent (API ключ комнаты)
+  - name: rooms
+    description: Комнаты — выдача ключа станции (JWT admin)
+  - name: stations
+    description: Heartbeat, регистрация станций
+  - name: sessions
+    description: Управление игровыми сессиями
+  - name: matches
+    description: Результаты уровней
+  - name: users
+    description: Игроки
+  - name: admin
+    description: Админские операции (для операторов)
+  - name: rating
+    description: Рейтинг и leaderboards
+  - name: transactions
+    description: Пополнения и списания баланса
+
+components:
+  securitySchemes:
+    StationApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: "station_live_<hex64>"
+      description: API key конкретной станции (middleware → backend)
+    UserJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Пользовательский JWT (web client → backend)
+    OperatorJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT оператора (админка → backend)
+
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, example: "sess_8f3a2c1d-b4f5-4e8a-9c3d-1f2a3b4c5d6e" }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, example: "user_1234567890" }
+    StationId:
+      name: stationId
+      in: path
+      required: true
+      schema: { type: string, example: "laser-matrix-01" }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, example: "sess_abc-L1-A1" }
+      description: "Для идемпотентности POST запросов"
+
+  schemas:
+    GameMode:
+      type: string
+      enum: [classic, dynamic, chaos]
+
+    SessionStatus:
+      type: string
+      enum: [CREATED, WAITING, STARTING, ACTIVE, PAUSED, COMPLETED, CANCELLED, ERROR]
+
+    SessionEndReason:
+      type: string
+      enum: [time_elapsed, operator_cancelled, all_levels_completed, network_error, error]
+
+    FailReason:
+      type: string
+      nullable: true
+      enum: [time_out, lives_lost, session_ended, null]
+
+    PaymentMethod:
+      type: string
+      enum: [cash, card, online]
+
+    TransactionType:
+      type: string
+      enum: [topup, deduction, refund]
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: "INSUFFICIENT_BALANCE"
+        message:
+          type: string
+          example: "User has 5 minutes, but 10 required"
+        details:
+          type: object
+          additionalProperties: true
+
+    HeartbeatRequest:
+      type: object
+      required: [buildVersion, uptime]
+      properties:
+        buildVersion: { type: string, example: "1.0.0" }
+        uptime: { type: integer, description: "seconds since start", example: 3600 }
+        currentSessionId:
+          type: string
+          nullable: true
+          example: "sess_..."
+        middlewareStatus:
+          type: string
+          enum: [healthy, degraded, error]
+          example: "healthy"
+        hardwareStatus:
+          type: string
+          enum: [connected, disconnected, error]
+          example: "connected"
+
+    HeartbeatResponse:
+      type: object
+      properties:
+        acknowledged: { type: boolean }
+        serverTime: { type: string, format: date-time }
+        needsUpdate: { type: boolean, example: false }
+        pendingCommands:
+          type: array
+          items: { $ref: "#/components/schemas/BackendCommand" }
+
+    BackendCommand:
+      type: object
+      description: "Команда от backend которую middleware должен передать UE"
+      properties:
+        commandId: { type: string }
+        type:
+          type: string
+          enum: [session_created, session_start, session_pause, session_resume, session_cancel]
+        payload: { type: object, additionalProperties: true }
+
+    CreateSessionRequest:
+      type: object
+      required: [stationId, mode]
+      properties:
+        stationId: { type: string, example: "laser-matrix-01" }
+        mode: { $ref: "#/components/schemas/GameMode" }
+        startLevel: { type: integer, minimum: 1, maximum: 10, default: 1 }
+        maxPlayers: { type: integer, minimum: 1, maximum: 6, default: 6 }
+        durationSeconds: { type: integer, default: 600 }
+
+    SessionFull:
+      type: object
+      properties:
+        sessionId: { type: string }
+        sessionToken: { type: string }
+        stationId: { type: string }
+        mode: { $ref: "#/components/schemas/GameMode" }
+        startLevel: { type: integer }
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        joinCode: { type: string, example: "7AB-KZ9" }
+        qrImageUrl: { type: string, format: uri }
+        maxPlayers: { type: integer }
+        players:
+          type: array
+          items: { $ref: "#/components/schemas/PlayerSlot" }
+        durationSeconds: { type: integer }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time }
+        totalScore: { type: integer, nullable: true }
+
+    PlayerSlot:
+      type: object
+      required: [slot, userId, displayName]
+      properties:
+        slot: { type: integer, minimum: 0, maximum: 5 }
+        userId: { type: string }
+        displayName: { type: string }
+        color: { type: string, example: "#FF3355" }
+        joinedAt: { type: string, format: date-time }
+
+    ConfirmQrShownRequest:
+      type: object
+      required: [shownAt]
+      properties:
+        shownAt: { type: string, format: date-time }
+
+    SubmitMatchRequest:
+      type: object
+      required: [level, attemptNumber, startedAt, completedAt, finalScore, livesLeft, bVictory]
+      properties:
+        level: { type: integer, minimum: 1, maximum: 10 }
+        attemptNumber: { type: integer, minimum: 1 }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        durationSeconds: { type: number }
+        finalScore: { type: integer }
+        livesLeft: { type: integer, minimum: 0, maximum: 3 }
+        livesBonus: { type: integer }
+        timeBonus: { type: integer }
+        timeUsed: { type: number }
+        bVictory: { type: boolean }
+        failReason: { $ref: "#/components/schemas/FailReason" }
+        mode: { $ref: "#/components/schemas/GameMode" }
+        rawResult:
+          type: object
+          additionalProperties: true
+          description: "Full FOLLevelResult payload for debugging"
+
+    SubmitMatchResponse:
+      type: object
+      properties:
+        matchId: { type: string }
+        created:
+          type: boolean
+          description: "true = created new, false = already existed (idempotent retry)"
+
+    EndSessionRequest:
+      type: object
+      required: [endedAt, reason, durationSeconds, matchesPlayed, totalScore]
+      properties:
+        endedAt: { type: string, format: date-time }
+        reason: { $ref: "#/components/schemas/SessionEndReason" }
+        durationSeconds: { type: integer }
+        matchesPlayed: { type: integer }
+        matchesWon: { type: integer }
+        totalScore: { type: integer }
+        matches:
+          type: array
+          description: "Snapshot всех матчей для дебага"
+          items:
+            type: object
+            properties:
+              level: { type: integer }
+              attemptNumber: { type: integer }
+              finalScore: { type: integer }
+              bVictory: { type: boolean }
+              reason: { type: string }
+
+    EndSessionResponse:
+      type: object
+      properties:
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        ratingDelta:
+          type: object
+          description: "Map userId -> rating delta"
+          additionalProperties:
+            type: object
+            properties:
+              allTimePoints: { type: integer }
+              monthlyPoints: { type: integer }
+              dailyPoints: { type: integer }
+
+    JoinSessionRequest:
+      type: object
+      required: [joinCode]
+      properties:
+        joinCode: { type: string, example: "7AB-KZ9" }
+
+    JoinSessionResponse:
+      type: object
+      properties:
+        sessionId: { type: string }
+        slot: { type: integer }
+        balanceAfter: { type: integer, description: "minutes after deduction" }
+        status: { type: string, enum: [joined] }
+
+    UserProfile:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        displayName: { type: string }
+        balanceMinutes: { type: integer }
+        rating:
+          type: object
+          properties:
+            allTimePoints: { type: integer }
+            monthlyPoints: { type: integer }
+            dailyPoints: { type: integer }
+            globalRank: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+
+    BalanceResponse:
+      type: object
+      properties:
+        balanceMinutes: { type: integer }
+        recentTransactions:
+          type: array
+          items: { $ref: "#/components/schemas/Transaction" }
+
+    Transaction:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        type: { $ref: "#/components/schemas/TransactionType" }
+        amountMinutes: { type: integer }
+        priceAmount: { type: number, nullable: true }
+        paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
+        balanceAfter: { type: integer }
+        sessionId: { type: string, nullable: true }
+        operatorId: { type: string, nullable: true }
+        venueId: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    TopupRequest:
+      type: object
+      required: [amountMinutes, priceAmount, paymentMethod]
+      properties:
+        amountMinutes: { type: integer, minimum: 1 }
+        priceAmount: { type: number, minimum: 0 }
+        paymentMethod: { $ref: "#/components/schemas/PaymentMethod" }
+        notes: { type: string, nullable: true }
+
+    LeaderboardEntry:
+      type: object
+      properties:
+        rank: { type: integer }
+        userId: { type: string }
+        displayName: { type: string }
+        points: { type: integer }
+        gamesPlayed: { type: integer }
+        avatarUrl: { type: string, nullable: true }
+
+    LeaderboardResponse:
+      type: object
+      properties:
+        period: { type: string, enum: [all_time, monthly, daily] }
+        venueId: { type: string, nullable: true }
+        total: { type: integer }
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/LeaderboardEntry" }
+        updatedAt: { type: string, format: date-time }
+
+paths:
+
+  # ============================================================================
+  # IMPLEMENTED — NestJS oyna (JWT / StationApiKey)
+  # ============================================================================
+
+  /game-sessions/start:
+    post:
+      tags: [game-sessions]
+      summary: Создать сессию (QR-сценарий)
+      security: [{ OperatorJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roomId, modeId, venueId, playerIds]
+              properties:
+                roomId: { type: string, format: uuid }
+                modeId: { type: string, format: uuid }
+                venueId: { type: string, format: uuid }
+                playerIds:
+                  type: array
+                  items: { type: string, format: uuid }
+                  minItems: 1
+      responses:
+        "201":
+          description: Created (тело как в Nest)
+        "400": { description: Bad request }
+
+  /game-sessions/{id}/cancel-pending:
+    post:
+      tags: [game-sessions]
+      summary: Отменить сессию в ожидании
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /game-sessions/{id}/pause:
+    post:
+      tags: [game-sessions]
+      summary: Пауза активной сессии
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /game-sessions/{id}/resume:
+    post:
+      tags: [game-sessions]
+      summary: Возобновить активную сессию
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /game-sessions/{id}/end:
+    post:
+      tags: [game-sessions]
+      summary: Завершить сессию (идемпотентно при повторе после COMPLETED)
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [durationSeconds, results]
+              properties:
+                durationSeconds: { type: integer, minimum: 1 }
+                results:
+                  type: array
+                  items:
+                    type: object
+                    required: [userId, score]
+                    properties:
+                      userId: { type: string, format: uuid }
+                      score: { type: integer, minimum: 0 }
+      responses:
+        "200": { description: OK }
+
+  /game-sessions/{token}/activate:
+    post:
+      tags: [game-sessions]
+      summary: Активировать сессию по sessionToken (UE / агент)
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /game-sessions/by-token/{token}:
+    get:
+      tags: [game-sessions]
+      summary: Получить сессию по sessionToken
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /game-sessions:
+    get:
+      tags: [game-sessions]
+      summary: Список сессий
+      security: [{ OperatorJWT: [] }]
+      responses:
+        "200": { description: OK }
+
+  /station/rooms/{roomId}/heartbeat:
+    post:
+      tags: [station]
+      summary: Heartbeat станции
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                buildVersion: { type: string }
+                uptimeSeconds: { type: integer }
+                currentSessionId: { type: string, format: uuid, nullable: true }
+      responses:
+        "200": { description: OK }
+
+  /station/rooms/{roomId}/commands:
+    get:
+      tags: [station]
+      summary: Очередь команд CRM → агент (polling)
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Массив команд с полями id, type, payload, sessionId, createdAt
+
+  /station/rooms/{roomId}/commands/ack:
+    post:
+      tags: [station]
+      summary: Подтвердить доставку команд
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [commandIds]
+              properties:
+                commandIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  acknowledged: { type: integer }
+
+  /station/rooms/{roomId}/sessions/{sessionId}/match-reports:
+    post:
+      tags: [station]
+      summary: Отчёт уровня (идемпотентно)
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level, attemptNumber, result]
+              properties:
+                level: { type: integer, minimum: 1 }
+                attemptNumber: { type: integer, minimum: 1 }
+                durationSeconds: { type: integer }
+                completedAt: { type: string }
+                result: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: OK }
+
+  /station/rooms/{roomId}/sessions/activate-by-token:
+    post:
+      tags: [station]
+      summary: Активировать сессию (агент; sessionToken должен принадлежать roomId)
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionToken]
+              properties:
+                sessionToken: { type: string, format: uuid }
+      responses:
+        "200": { description: OK }
+
+  /station/rooms/{roomId}/sessions/{sessionId}/end:
+    post:
+      tags: [station]
+      summary: Завершить сессию от станции (те же durationSeconds + results)
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [durationSeconds, results]
+              properties:
+                durationSeconds: { type: integer, minimum: 1 }
+                results:
+                  type: array
+                  items:
+                    type: object
+                    required: [userId, score]
+                    properties:
+                      userId: { type: string, format: uuid }
+                      score: { type: integer, minimum: 0 }
+      responses:
+        "200": { description: OK }
+
+  /rooms/{id}/station-api-key:
+    post:
+      tags: [rooms]
+      summary: Задать API-ключ Room Agent (ADMIN JWT, bcrypt на сервере)
+      security: [{ OperatorJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [apiKey]
+              properties:
+                apiKey: { type: string, minLength: 24 }
+      responses:
+        "200": { description: OK }
+
+  # ============================================================================
+  # DRAFT — целевая модель (частично не реализована)
+  # ============================================================================
+  /stations/{stationId}/heartbeat:
+    post:
+      tags: [stations]
+      summary: Heartbeat от middleware (каждые 30 сек)
+      security: [{ StationApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/StationId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HeartbeatRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HeartbeatResponse" }
+        "401":
+          description: Invalid API key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ============================================================================
+  # SESSIONS
+  # ============================================================================
+  /sessions:
+    post:
+      tags: [sessions]
+      summary: Создать сессию (оператор из админки)
+      security: [{ OperatorJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSessionRequest" }
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionFull" }
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Station is busy (has active session)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /sessions/{sessionId}:
+    get:
+      tags: [sessions]
+      summary: Получить состояние сессии
+      security:
+        - StationApiKey: []
+        - OperatorJWT: []
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionFull" }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /sessions/{sessionId}/confirm-qr-shown:
+    post:
+      tags: [sessions]
+      summary: UE подтвердил что QR показан
+      security: [{ StationApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfirmQrShownRequest" }
+      responses:
+        "200":
+          description: OK, session transitioned to WAITING
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { $ref: "#/components/schemas/SessionStatus" }
+
+  /sessions/{sessionId}/start:
+    post:
+      tags: [sessions]
+      summary: Оператор запускает игру (после того как игроки присоединились)
+      security: [{ OperatorJWT: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses:
+        "200":
+          description: OK, session → STARTING (countdown)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { $ref: "#/components/schemas/SessionStatus" }
+                  players:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlayerSlot" }
+
+  /sessions/{sessionId}/pause:
+    post:
+      tags: [sessions]
+      summary: Пауза
+      security: [{ OperatorJWT: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses:
+        "200":
+          description: OK
+
+  /sessions/{sessionId}/resume:
+    post:
+      tags: [sessions]
+      summary: Возобновить
+      security: [{ OperatorJWT: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses:
+        "200":
+          description: OK
+
+  /sessions/{sessionId}/cancel:
+    post:
+      tags: [sessions]
+      summary: Отменить сессию (с refund игрокам)
+      security:
+        - OperatorJWT: []
+        - StationApiKey: []
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, example: "operator_request" }
+      responses:
+        "200":
+          description: OK, status=CANCELLED, balance refunded
+
+  /sessions/{sessionId}/matches:
+    post:
+      tags: [matches]
+      summary: Отправить результат одного уровня (идемпотентно)
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SessionId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitMatchRequest" }
+      responses:
+        "201":
+          description: Match recorded first time
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmitMatchResponse" }
+        "200":
+          description: Already exists (idempotent)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmitMatchResponse" }
+        "400":
+          description: Invalid data
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /sessions/{sessionId}/end:
+    post:
+      tags: [sessions]
+      summary: Закончить сессию и триггерить расчёт рейтинга
+      security: [{ StationApiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SessionId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EndSessionRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EndSessionResponse" }
+
+  # ============================================================================
+  # USERS (WebClient)
+  # ============================================================================
+  /users/me:
+    get:
+      tags: [users]
+      summary: Профиль текущего пользователя
+      security: [{ UserJWT: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserProfile" }
+
+  /users/me/balance:
+    get:
+      tags: [users]
+      summary: Баланс + последние транзакции
+      security: [{ UserJWT: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BalanceResponse" }
+
+  /users/me/join-session:
+    post:
+      tags: [users]
+      summary: Игрок сканирует QR, списывается 10 минут, добавляется в сессию
+      security: [{ UserJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JoinSessionRequest" }
+      responses:
+        "200":
+          description: Joined
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JoinSessionResponse" }
+        "402":
+          description: Insufficient balance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Session full / not available / user already joined
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ============================================================================
+  # ADMIN (Operators)
+  # ============================================================================
+  /admin/users/{userId}/topup:
+    post:
+      tags: [admin]
+      summary: Пополнить баланс игрока (оператор на ресепшн)
+      security: [{ OperatorJWT: [] }]
+      parameters: [{ $ref: "#/components/parameters/UserId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TopupRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transaction" }
+
+  /admin/stations:
+    get:
+      tags: [admin]
+      summary: Список станций (для админки оператора)
+      security: [{ OperatorJWT: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    venueId: { type: string }
+                    isOnline: { type: boolean }
+                    currentSessionId: { type: string, nullable: true }
+                    buildVersion: { type: string }
+                    lastSeenAt: { type: string, format: date-time }
+
+  # ============================================================================
+  # RATING
+  # ============================================================================
+  /rating/leaderboard:
+    get:
+      tags: [rating]
+      summary: Топ игроков
+      parameters:
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [all_time, monthly, daily]
+            default: all_time
+        - name: venueId
+          in: query
+          schema: { type: string }
+          description: "Если указан — только по конкретной точке"
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10, maximum: 100 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LeaderboardResponse" }
+
+  /rating/users/{userId}:
+    get:
+      tags: [rating]
+      summary: Детальный рейтинг игрока
+      parameters: [{ $ref: "#/components/parameters/UserId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId: { type: string }
+                  displayName: { type: string }
+                  allTimePoints: { type: integer }
+                  monthlyPoints: { type: integer }
+                  dailyPoints: { type: integer }
+                  globalRankAllTime: { type: integer, nullable: true }
+                  globalRankMonthly: { type: integer, nullable: true }
+                  globalRankDaily: { type: integer, nullable: true }
+                  gamesPlayed: { type: integer }
+                  lastGameAt: { type: string, format: date-time, nullable: true }
+                  byVenue:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        venueId: { type: string }
+                        venueName: { type: string }
+                        allTimePoints: { type: integer }
+                        gamesPlayed: { type: integer }

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
@@ -74,6 +75,16 @@ export class RoomsService {
   async remove(id: string) {
     await this.findOne(id);
     return this.prisma.room.delete({ where: { id } });
+  }
+
+  async setStationApiKey(roomId: string, plainKey: string) {
+    await this.findOne(roomId);
+    const stationApiKeyHash = await bcrypt.hash(plainKey, 12);
+    return this.prisma.room.update({
+      where: { id: roomId },
+      data: { stationApiKeyHash },
+      select: { id: true, name: true },
+    });
   }
 }
 

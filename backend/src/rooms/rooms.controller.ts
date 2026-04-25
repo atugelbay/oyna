@@ -14,6 +14,7 @@ import { Role } from '@prisma/client';
 import { RoomsService } from './rooms.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { SetStationApiKeyDto } from './dto/set-station-api-key.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards';
 import { Roles } from '../common/decorators';
@@ -63,6 +64,20 @@ export class RoomsController {
   @ApiOperation({ summary: 'Удалить комнату' })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.roomsService.remove(id);
+  }
+
+  @Post(':id/station-api-key')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiOperation({
+    summary: 'Задать API-ключ Room Agent для комнаты (bcrypt, показывается только при вводе)',
+  })
+  setStationApiKey(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetStationApiKeyDto,
+  ) {
+    return this.roomsService.setStationApiKey(id, dto.apiKey);
   }
 }
 

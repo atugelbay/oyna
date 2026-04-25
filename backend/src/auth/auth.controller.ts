@@ -1,7 +1,13 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { RegisterDto, RequestOtpDto, VerifyOtpDto, RefreshDto } from './dto';
+import {
+  CrmLoginDto,
+  RegisterDto,
+  RequestOtpDto,
+  VerifyOtpDto,
+  RefreshDto,
+} from './dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -38,7 +44,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Вход в CRM (пароль или код)' })
   @ApiResponse({ status: 200, description: 'Успешный вход' })
   @ApiResponse({ status: 401, description: 'Неверные данные' })
-  crmLogin(@Body() dto: { phone: string; password?: string; code?: string; isEmployee?: boolean }) {
+  crmLogin(@Body() dto: CrmLoginDto) {
     return this.authService.crmLogin(dto);
   }
 
