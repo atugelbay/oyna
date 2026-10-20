@@ -160,6 +160,14 @@ model Room {
   lastHeartbeatAt       DateTime?
   heartbeatBuildVersion String?
 
+  /** Room API v1: room_id из GET /v1/room (lasers, megagrid, …) */
+  engineRoomId    String?
+  /** catalog_hash из room_online / ответа каталога */
+  catalogHash     String?
+  /** Последний снимок GET /v1/catalog */
+  catalogJson     Json?
+  catalogSyncedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -216,6 +224,8 @@ model GameSession {
   modeId          String
   venueId         String
   sessionToken    String        @unique @default(uuid())
+  /** UUID сеанса из Room API v1 (session_started.session_id) */
+  engineSessionId String?       @unique
   startTime       DateTime?
   endTime         DateTime?
   /** CRM «Пауза»: таймер заморожен, при возобновлении startTime сдвигается */

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomAgentCommandsService } from '../station/room-agent-commands.service';
 import { StartSessionDto } from './dto/start-session.dto';
@@ -17,18 +18,30 @@ import {
 /** Минимум на балансе у каждого игрока для старта сессии (10 мин) */
 const MIN_BALANCE_SECONDS = 600;
 
-function mapModeToEngineString(modeName: string): string {
-  const n = modeName.toLowerCase();
-  if (n.includes('chaos') || n.includes('хаос')) return 'chaos';
-  if (n.includes('dynamic') || n.includes('динам')) return 'dynamic';
-  return 'classic';
+/** Команда агенту: HTTP-вызов в Room API v1 на моноблоке. */
+function roomApiCall(
+  method: string,
+  path: string,
+  body: Record<string, unknown> | null = null,
+): Prisma.InputJsonObject {
+  return {
+    method,
+    path,
+    body: body as Prisma.InputJsonValue | null,
+    idempotency_key: randomUUID(),
+  };
 }
 
-function engineEvent(
-  event: string,
-  payload: Record<string, unknown>,
-): Prisma.InputJsonObject {
-  return { event, ...payload };
+function modeIdFromGameMode(mode: {
+  name: string;
+  config: Prisma.JsonValue | null;
+}): string | null {
+  if (mode.config && typeof mode.config === 'object' && !Array.isArray(mode.config)) {
+    const cfg = mode.config as Record<string, unknown>;
+    const raw = cfg.mode_id ?? cfg.modeId;
+    if (typeof raw === 'string' && raw.includes('.')) return raw;
+  }
+  return null;
 }
 
 @Injectable()
@@ -98,26 +111,40 @@ export class GameSessionsService {
       },
     });
 
-    await this.roomAgentCommands.enqueue(
-      session.roomId,
-      'session_created',
-      engineEvent('session_created', {
-        session_id: session.id,
-        session_token: session.sessionToken,
-        station_id: session.roomId,
-        mode: mapModeToEngineString(session.mode.name),
-        level: 1,
-        max_players: session.room.maxPlayers,
-        duration_seconds: MIN_BALANCE_SECONDS,
-        waiting_timeout_seconds: MIN_BALANCE_SECONDS,
-        players: session.players.map((p, i) => ({
-          slot: i,
-          user_id: p.user.id,
-          display_name: p.user.nickname ?? p.user.name ?? p.userId,
-        })),
-      }),
-      session.id,
-    );
+    // Room API v1: CRM кладёт игроков в лобби моноблока; старт — кнопка на игре
+    // (или POST /v1/_dev/start в dev через activate).
+    for (const p of session.players) {
+      const balance = await this.prisma.accountBalance.findUnique({
+        where: { userId: p.userId },
+      });
+      const minutesLeft = balance
+        ? Math.floor(balance.availableSeconds / 60)
+        : null;
+      await this.roomAgentCommands.enqueue(
+        session.roomId,
+        'room_api.lobby_add_player',
+        roomApiCall('POST', '/lobby/players', {
+          player_id: p.user.id,
+          nick: (p.user.nickname ?? p.user.name ?? 'Player').slice(0, 32),
+          minutes_left: minutesLeft,
+          source: 'operator',
+        }),
+        session.id,
+      );
+    }
+
+    const modeId = modeIdFromGameMode(session.mode);
+    if (modeId) {
+      await this.roomAgentCommands.enqueue(
+        session.roomId,
+        'room_api.dev_select',
+        roomApiCall('POST', '/_dev/select', {
+          mode_id: modeId,
+          level: 1,
+        }),
+        session.id,
+      );
+    }
 
     return {
       sessionId: session.id,
@@ -167,22 +194,11 @@ export class GameSessionsService {
       },
     });
 
+    // Dev/mock: нажать «НАЧАТЬ ИГРУ». В зальной сборке /_dev/* → 404 — старт на моноблоке.
     await this.roomAgentCommands.enqueue(
       updated.roomId,
-      'session_start',
-      engineEvent('session_start', {
-        session_id: updated.id,
-        // The current UE code can start directly from this root-level shape.
-        mode: mapModeToEngineString(updated.mode.name),
-        level: 1,
-        countdown_seconds: 3,
-        players: updated.players.map((p, i) => ({
-          slot: i,
-          user_id: p.userId,
-          display_name: p.user.nickname ?? p.user.name ?? '',
-          color: '#88AAFF',
-        })),
-      }),
+      'room_api.dev_start',
+      roomApiCall('POST', '/_dev/start', null),
       updated.id,
     );
 
@@ -201,20 +217,11 @@ export class GameSessionsService {
     if (session.pausedAt) {
       throw new BadRequestException('Сессия уже на паузе');
     }
-    const row = await this.prisma.gameSession.update({
+    // Room API v1 не даёт CRM-паузу игры — только таймер CRM.
+    return this.prisma.gameSession.update({
       where: { id: session.id },
       data: { pausedAt: new Date() },
     });
-    await this.roomAgentCommands.enqueue(
-      row.roomId,
-      'session_pause',
-      engineEvent('session_pause', {
-        session_id: row.id,
-        reason: 'operator_request',
-      }),
-      row.id,
-    );
-    return row;
   }
 
   async resumeActiveSession(sessionId: string) {
@@ -228,20 +235,13 @@ export class GameSessionsService {
     }
     const deltaMs = Date.now() - session.pausedAt.getTime();
     const newStart = new Date(session.startTime.getTime() + deltaMs);
-    const row = await this.prisma.gameSession.update({
+    return this.prisma.gameSession.update({
       where: { id: session.id },
       data: {
         pausedAt: null,
         startTime: newStart,
       },
     });
-    await this.roomAgentCommands.enqueue(
-      row.roomId,
-      'session_resume',
-      engineEvent('session_resume', { session_id: row.id }),
-      row.id,
-    );
-    return row;
   }
 
   /** Отмена лобби в ожидании (CRM) */
@@ -251,20 +251,25 @@ export class GameSessionsService {
     if (session.status !== SessionStatus.PENDING) {
       throw new BadRequestException('Отменить можно только сессию в ожидании');
     }
-    const row = await this.prisma.gameSession.update({
+    const full = await this.prisma.gameSession.findUnique({
       where: { id: session.id },
+      include: { players: true },
+    });
+    if (!full) throw new NotFoundException('Сессия не найдена');
+
+    for (const p of full.players) {
+      await this.roomAgentCommands.enqueue(
+        full.roomId,
+        'room_api.lobby_remove_player',
+        roomApiCall('DELETE', `/lobby/players/${p.userId}`, null),
+        full.id,
+      );
+    }
+
+    return this.prisma.gameSession.update({
+      where: { id: full.id },
       data: { status: SessionStatus.CANCELLED },
     });
-    await this.roomAgentCommands.enqueue(
-      row.roomId,
-      'session_cancel',
-      engineEvent('session_cancel', {
-        session_id: row.id,
-        reason: 'operator_cancel',
-      }),
-      row.id,
-    );
-    return row;
   }
 
   async endSession(sessionId: string, dto: EndSessionDto) {
@@ -301,6 +306,32 @@ export class GameSessionsService {
           `Игрок ${r.userId} не входит в состав этой сессии`,
         );
       }
+    }
+
+    // CRM «Стоп» с нулевыми очками → только Room API /session/stop;
+    // реальные очки придут в session_finished → повторный end.
+    const allZero = dto.results.every((r) => r.score === 0);
+    if (
+      allZero &&
+      session.engineSessionId &&
+      session.status === SessionStatus.ACTIVE
+    ) {
+      await this.roomAgentCommands.enqueue(
+        session.roomId,
+        'room_api.session_stop',
+        roomApiCall('POST', '/session/stop', {
+          session_id: session.engineSessionId,
+          reason: 'operator',
+        }),
+        session.id,
+      );
+      return {
+        sessionId: session.id,
+        status: session.status,
+        deductedSeconds: session.deductedSeconds,
+        scores: dto.results,
+        pendingEngineStop: true,
+      };
     }
 
     const pk = session.id;

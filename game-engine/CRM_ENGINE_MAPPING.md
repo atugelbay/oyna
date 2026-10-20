@@ -1,140 +1,97 @@
-# CRM ↔ game-engine mapping
+# CRM ↔ Room API v1 mapping
 
-Сводный контракт между NestJS API (`../backend`), черновиком [INTEGRATION.md](INTEGRATION.md)/[openapi.yaml](openapi.yaml) и WebSocket [WS_PROTOCOL.md](WS_PROTOCOL.md).
+Контракт между NestJS (`../backend`) и игровым **Room API v1**
+(`Docs/api/room_api_v1` в репозитории комнаты / моноблок).
 
-Глобальный префикс HTTP: **`/api`** (`../backend/src/main.ts`).
+Глобальный префикс Nest: **`/api`**.
 
-## Маршруты Nest ↔ черновик openapi
+Игра на моноблоке: **`http://<host>:8080/v1`**, заголовок **`X-Room-Key`**.
+Агент комнаты — клиент обоих API (не WS-сервер для UE).
 
-| Назначение | Реальный Nest (JWT оператор) | Черновик openapi |
-|------------|------------------------------|------------------|
-| Создать сессию | `POST /api/game-sessions/start` | `POST /api/v1/sessions` |
-| Активировать (UE/агент) | `POST /api/game-sessions/:token/activate` | `POST /api/v1/sessions/{id}/start` (аналог по смыслу) |
-| Пауза | `POST /api/game-sessions/:id/pause` | `POST .../pause` |
-| Resume | `POST /api/game-sessions/:id/resume` | `POST .../resume` |
-| Отмена лобби | `POST /api/game-sessions/:id/cancel-pending` | `POST .../cancel` |
-| Завершение + очки | `POST /api/game-sessions/:id/end` или **`POST /api/station/rooms/:roomId/sessions/:sessionId/end`** (ключ станции) | `POST .../end` |
-| Активация без JWT | **`POST /api/station/rooms/:roomId/sessions/activate-by-token`** `{ "sessionToken" }` | — |
-| Сессия по токену | `GET /api/game-sessions/by-token/:token` | — |
-| Список сессий | `GET /api/game-sessions` | — |
-| Heartbeat станции | `POST /api/station/rooms/:roomId/heartbeat` | `POST /api/v1/stations/{id}/heartbeat` |
-| Команды CRM → агент | `GET /api/station/rooms/:roomId/commands` | `GET .../sessions/{id}/events` (аналог) |
-| Ack команд | `POST /api/station/rooms/:roomId/commands/ack` | — |
-| Отчёт уровня (идемп.) | `POST /api/station/rooms/:roomId/sessions/:sessionId/match-reports` | `POST .../matches` |
+## Поток
 
-`roomId` в путях станции = UUID комнаты в CRM (= «station» в терминах железа для одной комнаты = один ноутбук).
+```
+CRM UI (JWT)
+  → Nest enqueue RoomAgentCommand { method, path, body, idempotency_key }
+Room Agent
+  → HTTP Room API (lobby/players, session/stop, _dev/…)
+Room Agent
+  ← GET /v1/events (journal)
+  → POST /api/station/rooms/:roomId/room-events
+Nest
+  ← session_started → ACTIVE + engineSessionId
+  ← level_finished  → SessionMatchReport
+  ← session_finished → end + scores + debit
+```
+
+## Маршруты Nest (станция)
+
+| Назначение | Nest (Bearer station key) |
+|------------|---------------------------|
+| Heartbeat | `POST /api/station/rooms/:roomId/heartbeat` |
+| Очередь команд | `GET /api/station/rooms/:roomId/commands` |
+| Ack команд | `POST /api/station/rooms/:roomId/commands/ack` |
+| Журнал Room API | **`POST /api/station/rooms/:roomId/room-events`** `{ "events": [ envelope… ] }` |
+| Каталог режимов | **`POST /api/station/rooms/:roomId/catalog`** ← тело `GET /v1/catalog` (+ `catalog_hash`) |
+| Match report (legacy) | `POST .../sessions/:sessionId/match-reports` |
+| End (legacy / от агента) | `POST .../sessions/:sessionId/end` |
+
+Каталог: агент при старте и при `room_online` с новым `catalog_hash` забирает `GET /v1/catalog` и шлёт в Nest.
+Nest пишет `Room.catalogJson` / `engineRoomId` и upsert’ит `GameMode` с `config.mode_id` + название из `title.ru`.
+Launch UI показывает эти режимы как «Режим с моноблока».
+
+`roomId` = UUID комнаты в CRM.
+
+## Команды в очереди (payload)
+
+```json
+{
+  "method": "POST",
+  "path": "/lobby/players",
+  "body": { "player_id": "uuid", "nick": "Aru", "source": "operator" },
+  "idempotency_key": "uuid"
+}
+```
+
+| CRM действие | type | Room API |
+|--------------|------|----------|
+| `POST /game-sessions/start` | `room_api.lobby_add_player` (+ опц. `room_api.dev_select`) | `POST /lobby/players`, `POST /_dev/select` |
+| activate | `room_api.dev_start` | `POST /_dev/start` (только dev/mock) |
+| cancel pending | `room_api.lobby_remove_player` | `DELETE /lobby/players/{id}` |
+| end с score=0 + есть `engineSessionId` | `room_api.session_stop` | `POST /session/stop` (финал ждём `session_finished`) |
+| pause / resume | — | только таймер CRM |
+
+`mode_id` для `_dev/select` берётся из `GameMode.config.mode_id` (например `"lasers.corridor"`).
+
+## События журнала → Nest
+
+| `type` | Действие CRM |
+|--------|----------------|
+| `room_online` | heartbeat build |
+| `lobby_changed` / `room_status` | пока ignore |
+| `session_started` | PENDING/ACTIVE → `engineSessionId`, status ACTIVE |
+| `level_finished` | upsert `SessionMatchReport` |
+| `session_finished` | `endSession` (очки из `payload.players[].total_score` / `total_score`) |
+
+Связка сессий: `GameSession.engineSessionId` = `session_id` из Room API.
 
 ## Аутентификация
 
 | Клиент | Заголовок |
 |--------|-----------|
-| CRM UI / оператор | `Authorization: Bearer <JWT>` |
-| Room Agent | `Authorization: Bearer <STATION_API_KEY>` + маршруты под `/api/station/...` |
+| CRM UI | `Authorization: Bearer <JWT>` |
+| Room Agent → Nest | `Authorization: Bearer <STATION_API_KEY>` |
+| Room Agent → игра | `X-Room-Key: <ROOM_API_KEY>` |
 
-Ключ станции: bcrypt-хэш в `Room.stationApiKeyHash`. Выдаётся администратором (см. API комнат); в логах не хранить.
+## Статусы
 
-## Статусы `GameSession` (Prisma) ↔ события WS
+| Prisma | Смысл |
+|--------|-------|
+| `PENDING` | Игроки поставлены в лобби, игра ещё не стартовала |
+| `ACTIVE` | `session_started` (или CRM activate) |
+| `COMPLETED` | `session_finished` / end |
+| `CANCELLED` | отмена лобби + remove players |
 
-| Prisma `SessionStatus` | Смысл | Типичные WS к UE (через очередь команд) |
-|------------------------|-------|----------------------------------------|
-| `PENDING` | Лобби после `start` | `session_created`; при джойне игроков — `player_joined`* |
-| `ACTIVE` | Игра идёт | `session_start` / `session_pause` / `session_resume` |
-| `COMPLETED` | Успешное завершение | — |
-| `CANCELLED` | Отмена | `session_cancel` |
-| `ERROR` | Авария | `session_cancel` или расширение `error` |
+## Запуск агента
 
-\*В текущей CRM игроки задаются при `start` (`playerIds`); событие `player_joined` из QR-потока может появиться позже при расширении бэкенда. Пока агент может слать в UE только состав из ответа `start`.
-
-## Тела запросов (ключи JSON на английском)
-
-### `POST /api/game-sessions/start`
-
-```json
-{
-  "roomId": "uuid",
-  "modeId": "uuid",
-  "venueId": "uuid",
-  "playerIds": ["uuid", "uuid"]
-}
-```
-
-### `POST /api/game-sessions/:id/end`
-
-```json
-{
-  "durationSeconds": 600,
-  "results": [{ "userId": "uuid", "score": 1500 }]
-}
-```
-
-Идемпотентность: повтор того же завершения после `COMPLETED` возвращает `200` без повторного списания/очков.
-
-### `POST /api/station/rooms/:roomId/heartbeat`
-
-```json
-{
-  "buildVersion": "1.0.0",
-  "uptimeSeconds": 3600,
-  "currentSessionId": "uuid-or-null"
-}
-```
-
-### `POST /api/station/rooms/:roomId/sessions/:sessionId/match-reports`
-
-```json
-{
-  "level": 1,
-  "attemptNumber": 1,
-  "durationSeconds": 105,
-  "completedAt": "2026-04-19T15:31:48.000Z",
-  "result": {
-    "finalScore": 1920,
-    "livesLeft": 3,
-    "bVictory": true,
-    "mode": "classic"
-  }
-}
-```
-
-Повтор с тем же `(sessionId, level, attemptNumber)` → `200`, запись не дублируется.
-
-## Payload очереди команд (`RoomAgentCommand`)
-
-Текущий C++ движок читает root-level поле `event` в `OLMain.cpp::DispatchEvent`, поэтому `payload` команды уже является готовым WebSocket-фреймом для UE:
-
-- `session_created` — после успешного `startSession`: `{ "event": "session_created", "session_id": "...", ... }`
-- `session_start` — после `activateSession`: `{ "event": "session_start", "session_id": "...", "mode": "classic", "level": 1 }`
-- `session_pause` / `session_resume` — после pause/resume
-- `session_cancel` — после `cancel-pending`
-
-Агент [agent/room_agent.py](agent/room_agent.py) поднимает локальный WebSocket-сервер `ws://localhost:8080/ws/laser`, ждёт подключение UE-клиента, отправляет эти payload-фреймы и ack'ает команду только после доставки хотя бы одному UE-клиенту.
-
-## UE → CRM
-
-Движок отправляет в агента `match_completed`:
-
-```json
-{
-  "event": "match_completed",
-  "session_id": "uuid",
-  "level": 1,
-  "attempt_number": 1,
-  "duration_seconds": 42,
-  "final_score": 1920,
-  "lives_left": 3,
-  "victory": true,
-  "mode": "classic"
-}
-```
-
-Агент сохраняет это через `POST /api/station/rooms/:roomId/sessions/:sessionId/match-reports`.
-
-## Таймер и пауза
-
-- **CRM**: `pausedAt`, сдвиг `startTime` при resume — логика в `../backend/src/game-sessions/game-sessions.service.ts`.
-- **UE**: игровое время не тикает при паузе (`bPaused`); длительность для списания — источник истины CRM/оператор при `end`.
-
-## Документы-источники правды
-
-- Схема БД: только `../backend/prisma/schema.prisma`, не [BACKEND_SCHEMA.md](BACKEND_SCHEMA.md).
-- OpenAPI в репозитории: [openapi.yaml](openapi.yaml) (синхронизирован с `/api/...`).
+См. [agent/README.md](agent/README.md).

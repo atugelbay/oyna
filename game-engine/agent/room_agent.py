@@ -1,319 +1,279 @@
 #!/usr/bin/env python3
 """
-Minimal Room Agent for local CRM -> Unreal Engine integration.
+Room Agent — мост CRM Nest ↔ Room API v1 (игра на моноблоке).
 
-Responsibilities:
-- Listen as a local WebSocket server on ws://localhost:8080/ws/laser.
-- Poll CRM station commands from /api/station/rooms/{ROOM_ID}/commands.
-- Forward command payloads to all connected UE clients as text frames.
-- Ack commands only after they were sent to at least one UE client.
+Архитектура v1:
+  Игра = HTTP/WS сервер http://127.0.0.1:8080/v1 (X-Room-Key)
+  Агент = клиент игры + клиент CRM (Bearer STATION_API_KEY)
 
-No third-party dependencies; Python 3.10+ standard library only.
+Потоки:
+  1) Long-poll GET /v1/events → POST CRM /station/rooms/{id}/room-events → POST /v1/events/ack
+  2) Poll CRM /station/.../commands → HTTP-вызов в Room API (method/path/body)
+  3) Heartbeat CRM
+  4) GET /v1/catalog → POST CRM /station/rooms/{id}/catalog (при старте и смене catalog_hash)
+
+Env:
+  BACKEND_BASE_URL   http://localhost:3000/api
+  ROOM_ID            UUID комнаты в CRM
+  STATION_API_KEY    ключ станции CRM
+  ROOM_API_BASE      http://127.0.0.1:8080/v1
+  ROOM_API_KEY       X-Room-Key (у заглушки: dev)
+  POLL_INTERVAL_SEC  2
+  EVENTS_WAIT_SEC    20
+  HEARTBEAT_INTERVAL 30
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
-import socketserver
-import struct
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from typing import Any
 
 
-WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-CLIENTS: set["WsHandler"] = set()
-CLIENTS_LOCK = threading.Lock()
-SESSION_PLAYERS: dict[str, list[str]] = {}
-SESSION_TOTALS: dict[str, dict[str, int]] = {}
-ENDED_SESSIONS: set[str] = set()
+def env(name: str, default: str | None = None) -> str:
+    value = os.environ.get(name, default)
+    if value is None or value == "":
+        raise SystemExit(f"Missing required env: {name}")
+    return value
 
 
 def http_json(
     method: str,
     url: str,
-    token: str,
+    *,
+    headers: dict[str, str] | None = None,
     body: dict[str, Any] | None = None,
-    timeout: int = 15,
+    timeout: float = 30,
 ) -> Any:
     data = None if body is None else json.dumps(body).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    req_headers = {"Accept": "application/json", **(headers or {})}
     if body is not None:
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        req_headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
         return json.loads(raw) if raw else None
 
 
-def ws_text_frame(message: str) -> bytes:
-    payload = message.encode("utf-8")
-    header = bytearray([0x81])
-    length = len(payload)
-    if length < 126:
-        header.append(length)
-    elif length < 65536:
-        header.append(126)
-        header.extend(struct.pack("!H", length))
-    else:
-        header.append(127)
-        header.extend(struct.pack("!Q", length))
-    return bytes(header) + payload
-
-
-class WsHandler(socketserver.BaseRequestHandler):
-    def setup(self) -> None:
-        self.alive = False
-
-    def handle(self) -> None:
-        try:
-            self.handshake()
-        except Exception as exc:
-            print("WS handshake failed:", exc)
-            return
-
-        with CLIENTS_LOCK:
-            CLIENTS.add(self)
-        self.alive = True
-        print("UE connected:", self.client_address)
-
-        try:
-            while self.alive:
-                if not self.read_frame():
-                    break
-        except (ConnectionResetError, OSError):
-            pass
-        finally:
-            self.alive = False
-            with CLIENTS_LOCK:
-                CLIENTS.discard(self)
-            print("UE disconnected:", self.client_address)
-
-    def handshake(self) -> None:
-        data = self.request.recv(4096).decode("utf-8", errors="ignore")
-        headers: dict[str, str] = {}
-        for line in data.split("\r\n")[1:]:
-            if ":" in line:
-                k, v = line.split(":", 1)
-                headers[k.strip().lower()] = v.strip()
-
-        key = headers.get("sec-websocket-key")
-        if not key:
-            raise ValueError("missing Sec-WebSocket-Key")
-
-        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
-        response = (
-            "HTTP/1.1 101 Switching Protocols\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept}\r\n"
-            "\r\n"
-        )
-        self.request.sendall(response.encode("utf-8"))
-
-    def read_frame(self) -> bool:
-        first = self.request.recv(2)
-        if not first:
-            return False
-
-        opcode = first[0] & 0x0F
-        masked = bool(first[1] & 0x80)
-        length = first[1] & 0x7F
-        if length == 126:
-            length = struct.unpack("!H", self.request.recv(2))[0]
-        elif length == 127:
-            length = struct.unpack("!Q", self.request.recv(8))[0]
-
-        mask = self.request.recv(4) if masked else b""
-        payload = bytearray(self.request.recv(length)) if length else bytearray()
-        if masked:
-            for i in range(len(payload)):
-                payload[i] ^= mask[i % 4]
-
-        if opcode == 0x8:  # close
-            return False
-        if opcode == 0x9:  # ping
-            self.request.sendall(bytes([0x8A, 0x00]))
-            return True
-        if opcode == 0x1 and payload:
-            message = payload.decode("utf-8", errors="replace")
-            print("UE -> agent:", message)
-            handle_ue_message(message)
-        return True
-
-    def send_text(self, message: str) -> bool:
-        try:
-            self.request.sendall(ws_text_frame(message))
-            return True
-        except OSError:
-            self.alive = False
-            return False
-
-
-class ThreadingWsServer(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
-
-
-def broadcast_to_ue(message: str) -> int:
-    sent = 0
-    with CLIENTS_LOCK:
-        clients = list(CLIENTS)
-    for client in clients:
-        if client.send_text(message):
-            sent += 1
-    return sent
-
-
-def truthy(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in ("1", "true", "yes", "y")
-    return bool(value)
-
-
-def remember_session_payload(payload: dict[str, Any]) -> None:
-    session_id = payload.get("session_id") or payload.get("sessionId")
-    if not session_id:
-        return
-
-    players = []
-    for player in payload.get("players") or []:
-        user_id = player.get("user_id") or player.get("userId")
-        if user_id:
-            players.append(str(user_id))
-
-    if players:
-        SESSION_PLAYERS[str(session_id)] = players
-        SESSION_TOTALS.setdefault(
-            str(session_id),
-            {"score": 0, "durationSeconds": 0},
-        )
-
-
-def handle_ue_message(message: str) -> None:
-    try:
-        event = json.loads(message)
-    except json.JSONDecodeError:
-        return
-
-    if event.get("event") != "match_completed":
-        return
-
+def crm_json(
+    method: str,
+    path: str,
+    token: str,
+    body: dict[str, Any] | None = None,
+    timeout: float = 30,
+) -> Any:
     base = os.environ.get("BACKEND_BASE_URL", "http://localhost:3000/api").rstrip("/")
-    room_id = os.environ["ROOM_ID"]
-    key = os.environ["STATION_API_KEY"]
-    session_id = event.get("session_id")
-    if not session_id:
-        print("UE match_completed ignored: missing session_id")
-        return
-
-    duration_seconds = int(event.get("duration_seconds") or 1)
-    final_score = int(event.get("final_score") or 0)
-    victory = truthy(event.get("victory"))
-    totals = SESSION_TOTALS.setdefault(
-        str(session_id),
-        {"score": 0, "durationSeconds": 0},
+    return http_json(
+        method,
+        f"{base}{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        body=body,
+        timeout=timeout,
     )
-    totals["score"] += final_score
-    totals["durationSeconds"] += max(1, duration_seconds)
-
-    body = {
-        "level": int(event.get("level") or 1),
-        "attemptNumber": int(event.get("attempt_number") or 1),
-        "durationSeconds": duration_seconds,
-        "result": {
-            "finalScore": final_score,
-            "livesLeft": int(event.get("lives_left") or 0),
-            "livesBonus": int(event.get("lives_bonus") or 0),
-            "timeBonus": int(event.get("time_bonus") or 0),
-            "timeUsed": float(event.get("time_used") or 0),
-            "bVictory": victory,
-            "reason": event.get("reason") or "",
-            "mode": event.get("mode") or "classic",
-        },
-    }
-
-    try:
-        res = http_json(
-            "POST",
-            f"{base}/station/rooms/{room_id}/sessions/{session_id}/match-reports",
-            key,
-            body,
-        )
-        print("UE match_completed -> CRM:", res)
-    except urllib.error.HTTPError as exc:
-        print("CRM match-report error:", exc.code, exc.read().decode("utf-8", errors="replace")[:500])
-    except Exception as exc:
-        print("CRM match-report error:", exc)
-
-    if not victory:
-        end_session_after_game_over(base, room_id, key, str(session_id))
 
 
-def end_session_after_game_over(
-    base: str,
-    room_id: str,
-    key: str,
-    session_id: str,
-) -> None:
-    if session_id in ENDED_SESSIONS:
+def room_json(
+    method: str,
+    path: str,
+    room_key: str,
+    body: dict[str, Any] | None = None,
+    *,
+    idempotency_key: str | None = None,
+    timeout: float = 30,
+) -> Any:
+    base = os.environ.get("ROOM_API_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    headers = {"X-Room-Key": room_key}
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    return http_json(
+        method,
+        f"{base}{path}",
+        headers=headers,
+        body=body,
+        timeout=timeout,
+    )
+
+
+_last_catalog_hash: str | None = None
+
+
+def sync_catalog(force: bool = False, catalog_hash: str | None = None) -> None:
+    """Выгрузить GET /v1/catalog в CRM (режимы для UI)."""
+    global _last_catalog_hash
+    room_id = env("ROOM_ID")
+    station_key = env("STATION_API_KEY")
+    room_key = env("ROOM_API_KEY", "dev")
+
+    if (
+        not force
+        and catalog_hash
+        and _last_catalog_hash
+        and catalog_hash == _last_catalog_hash
+    ):
         return
 
-    players = SESSION_PLAYERS.get(session_id) or []
-    if not players:
-        print("CRM end skipped: no players remembered for session", session_id)
+    try:
+        catalog = room_json("GET", "/catalog", room_key, timeout=15)
+    except Exception as exc:
+        print("Room catalog fetch error:", exc)
         return
 
-    totals = SESSION_TOTALS.get(session_id) or {"score": 0, "durationSeconds": 1}
-    total_score = int(totals.get("score") or 0)
-    total_duration = int(totals.get("durationSeconds") or 1)
+    if not isinstance(catalog, dict):
+        print("Room catalog: unexpected body")
+        return
 
-    body = {
-        "durationSeconds": max(1, total_duration),
-        "results": [{"userId": user_id, "score": total_score} for user_id in players],
-    }
+    body = dict(catalog)
+    if catalog_hash:
+        body["catalog_hash"] = catalog_hash
+    elif isinstance(body.get("catalog_hash"), str):
+        catalog_hash = body["catalog_hash"]
 
     try:
-        res = http_json(
+        res = crm_json(
             "POST",
-            f"{base}/station/rooms/{room_id}/sessions/{session_id}/end",
-            key,
+            f"/station/rooms/{room_id}/catalog",
+            station_key,
             body,
         )
-        ENDED_SESSIONS.add(session_id)
-        print("UE game over -> CRM session end:", res)
+        _last_catalog_hash = catalog_hash or _last_catalog_hash or "synced"
+        print("CRM catalog sync:", res)
     except urllib.error.HTTPError as exc:
-        print("CRM session-end error:", exc.code, exc.read().decode("utf-8", errors="replace")[:500])
+        print(
+            "CRM catalog error:",
+            exc.code,
+            exc.read().decode("utf-8", errors="replace")[:500],
+        )
     except Exception as exc:
-        print("CRM session-end error:", exc)
+        print("CRM catalog error:", exc)
+
+
+def events_loop() -> None:
+    room_id = env("ROOM_ID")
+    station_key = env("STATION_API_KEY")
+    room_key = env("ROOM_API_KEY", "dev")
+    wait = float(os.environ.get("EVENTS_WAIT_SEC", "20"))
+    after: int | None = None
+
+    # Стартовый курсор из health
+    try:
+        health = room_json("GET", "/health", room_key, timeout=10)
+        after = int(health.get("acked_up_to") or 0)
+        print(f"Room health ok, acked_up_to={after}, state={health.get('state')}")
+    except Exception as exc:
+        print("Room health error (will retry from after=0):", exc)
+        after = 0
+
+    sync_catalog(force=True)
+
+    while True:
+        try:
+            qs = urllib.parse.urlencode(
+                {"after": after if after is not None else 0, "limit": 100, "wait": wait}
+            )
+            page = room_json("GET", f"/events?{qs}", room_key, timeout=wait + 10)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:400]
+            print("Room events error:", exc.code, body)
+            time.sleep(2)
+            continue
+        except Exception as exc:
+            print("Room events error:", exc)
+            time.sleep(2)
+            continue
+
+        events = page.get("events") or []
+        next_cursor = int(page.get("next_cursor") or after or 0)
+
+        if events:
+            for ev in events:
+                if isinstance(ev, dict) and ev.get("type") == "room_online":
+                    payload = ev.get("payload") or {}
+                    ch = payload.get("catalog_hash")
+                    if isinstance(ch, str) and ch:
+                        sync_catalog(catalog_hash=ch)
+
+            try:
+                res = crm_json(
+                    "POST",
+                    f"/station/rooms/{room_id}/room-events",
+                    station_key,
+                    {"events": events},
+                )
+                print(f"CRM room-events ({len(events)}):", res)
+            except urllib.error.HTTPError as exc:
+                print(
+                    "CRM room-events error:",
+                    exc.code,
+                    exc.read().decode("utf-8", errors="replace")[:500],
+                )
+                time.sleep(2)
+                continue
+            except Exception as exc:
+                print("CRM room-events error:", exc)
+                time.sleep(2)
+                continue
+
+            try:
+                ack = room_json(
+                    "POST",
+                    "/events/ack",
+                    room_key,
+                    {"up_to": next_cursor},
+                    idempotency_key=str(uuid.uuid4()),
+                )
+                print("Room events ack:", ack)
+            except Exception as exc:
+                print("Room events ack error:", exc)
+
+        after = next_cursor
+
+
+def execute_room_command(payload: dict[str, Any], room_key: str) -> None:
+    method = str(payload.get("method") or "GET").upper()
+    path = str(payload.get("path") or "")
+    if not path:
+        raise ValueError("command payload missing path")
+    body = payload.get("body")
+    if body is not None and not isinstance(body, dict):
+        raise ValueError("command body must be object or null")
+    idem = payload.get("idempotency_key") or str(uuid.uuid4())
+
+    # Старые flat WS-payloads больше не шлём в игру
+    if "event" in payload and "path" not in payload:
+        print("Skip legacy WS payload:", payload.get("event"))
+        return
+
+    res = room_json(
+        method,
+        path,
+        room_key,
+        body if isinstance(body, dict) else None,
+        idempotency_key=str(idem),
+        timeout=20,
+    )
+    print(f"Room {method} {path} ->", res)
 
 
 def poll_commands() -> None:
-    base = os.environ.get("BACKEND_BASE_URL", "http://localhost:3000/api").rstrip("/")
-    room_id = os.environ["ROOM_ID"]
-    key = os.environ["STATION_API_KEY"]
+    room_id = env("ROOM_ID")
+    station_key = env("STATION_API_KEY")
+    room_key = env("ROOM_API_KEY", "dev")
     interval = float(os.environ.get("POLL_INTERVAL_SEC", "2"))
 
     while True:
         try:
-            commands = http_json(
+            commands = crm_json(
                 "GET",
-                f"{base}/station/rooms/{room_id}/commands",
-                key,
+                f"/station/rooms/{room_id}/commands",
+                station_key,
             )
-        except urllib.error.HTTPError as exc:
-            print("CRM poll error:", exc.code, exc.read().decode("utf-8", errors="replace")[:500])
-            time.sleep(interval)
-            continue
         except Exception as exc:
             print("CRM poll error:", exc)
             time.sleep(interval)
@@ -322,22 +282,28 @@ def poll_commands() -> None:
         ack_ids: list[str] = []
         for command in commands or []:
             payload = command.get("payload") or {}
-            if isinstance(payload, dict):
-                remember_session_payload(payload)
-            frame = json.dumps(payload, ensure_ascii=False)
-            sent = broadcast_to_ue(frame)
-            if sent:
-                print(f"CRM -> UE ({sent} clients): {frame}")
-                ack_ids.append(command["id"])
-            else:
-                print("Command pending, no UE client connected:", frame)
+            try:
+                if isinstance(payload, dict) and payload.get("path"):
+                    execute_room_command(payload, room_key)
+                    ack_ids.append(command["id"])
+                else:
+                    print("Skip unknown command payload:", command.get("type"), payload)
+                    ack_ids.append(command["id"])  # не блокируем очередь legacy
+            except urllib.error.HTTPError as exc:
+                # 404 на /_dev/* в зальной сборке — ack, чтобы не крутить вечно
+                body = exc.read().decode("utf-8", errors="replace")[:400]
+                print("Room command HTTP error:", exc.code, body)
+                if exc.code in (404, 409):
+                    ack_ids.append(command["id"])
+            except Exception as exc:
+                print("Room command error:", exc)
 
         if ack_ids:
             try:
-                http_json(
+                crm_json(
                     "POST",
-                    f"{base}/station/rooms/{room_id}/commands/ack",
-                    key,
+                    f"/station/rooms/{room_id}/commands/ack",
+                    station_key,
                     {"commandIds": ack_ids},
                 )
             except Exception as exc:
@@ -347,21 +313,27 @@ def poll_commands() -> None:
 
 
 def heartbeat_loop() -> None:
-    base = os.environ.get("BACKEND_BASE_URL", "http://localhost:3000/api").rstrip("/")
-    room_id = os.environ["ROOM_ID"]
-    key = os.environ["STATION_API_KEY"]
-    build_version = os.environ.get("UE_BUILD_VERSION", "dev")
+    room_id = env("ROOM_ID")
+    station_key = env("STATION_API_KEY")
+    room_key = env("ROOM_API_KEY", "dev")
     interval = float(os.environ.get("HEARTBEAT_INTERVAL", "30"))
     started = time.time()
 
     while True:
+        build = os.environ.get("UE_BUILD_VERSION", "agent")
         try:
-            http_json(
+            room = room_json("GET", "/room", room_key, timeout=10)
+            build = str(room.get("build") or build)
+        except Exception:
+            pass
+
+        try:
+            crm_json(
                 "POST",
-                f"{base}/station/rooms/{room_id}/heartbeat",
-                key,
+                f"/station/rooms/{room_id}/heartbeat",
+                station_key,
                 {
-                    "buildVersion": build_version,
+                    "buildVersion": build,
                     "uptimeSeconds": int(time.time() - started),
                 },
             )
@@ -371,15 +343,17 @@ def heartbeat_loop() -> None:
 
 
 def main() -> None:
-    host = os.environ.get("AGENT_WS_HOST", "127.0.0.1")
-    port = int(os.environ.get("AGENT_WS_PORT", "8080"))
+    env("ROOM_ID")
+    env("STATION_API_KEY")
+    room_base = os.environ.get("ROOM_API_BASE", "http://127.0.0.1:8080/v1")
+    print(f"Room Agent v1 → game {room_base}, CRM {os.environ.get('BACKEND_BASE_URL', 'http://localhost:3000/api')}")
 
-    threading.Thread(target=poll_commands, daemon=True).start()
-    threading.Thread(target=heartbeat_loop, daemon=True).start()
+    threading.Thread(target=events_loop, daemon=True, name="events").start()
+    threading.Thread(target=poll_commands, daemon=True, name="commands").start()
+    threading.Thread(target=heartbeat_loop, daemon=True, name="heartbeat").start()
 
-    with ThreadingWsServer((host, port), WsHandler) as server:
-        print(f"Room Agent listening on ws://{host}:{port}/ws/laser")
-        server.serve_forever()
+    while True:
+        time.sleep(3600)
 
 
 if __name__ == "__main__":

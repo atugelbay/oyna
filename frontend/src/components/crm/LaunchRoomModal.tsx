@@ -21,6 +21,9 @@ type RoomModeRow = {
   durationSeconds: number | null;
   /** порядок в форме «Сессии»; если нет — используется порядок с API */
   sortOrder: number | null;
+  /** Внешний mode_id из Room API catalog (lasers.corridor, …) */
+  engineModeId: string | null;
+  playable: boolean;
 };
 
 /** Минимум секунд на балансе у каждого игрока для подтверждения старта (10 мин) */
@@ -60,13 +63,28 @@ function normalizeRoomModes(list: unknown): RoomModeRow[] {
       const config = o.config;
       let durationSeconds: number | null = null;
       let sortOrder: number | null = null;
+      let engineModeId: string | null = null;
+      let playable = true;
       if (config && typeof config === "object" && config !== null) {
-        const c = config as { durationSeconds?: unknown; sortOrder?: unknown };
+        const c = config as {
+          durationSeconds?: unknown;
+          sortOrder?: unknown;
+          mode_id?: unknown;
+          modeId?: unknown;
+          playable?: unknown;
+        };
         if (typeof c.durationSeconds === "number" && Number.isFinite(c.durationSeconds) && c.durationSeconds > 0) {
           durationSeconds = Math.round(c.durationSeconds);
         }
         if (typeof c.sortOrder === "number" && Number.isFinite(c.sortOrder)) {
           sortOrder = c.sortOrder;
+        }
+        const mid = c.mode_id ?? c.modeId;
+        if (typeof mid === "string" && mid.includes(".")) {
+          engineModeId = mid;
+        }
+        if (typeof c.playable === "boolean") {
+          playable = c.playable;
         }
       }
       return {
@@ -75,6 +93,8 @@ function normalizeRoomModes(list: unknown): RoomModeRow[] {
         name: String(o.name ?? ""),
         durationSeconds,
         sortOrder,
+        engineModeId,
+        playable,
         _apiIndex: apiIndex,
       };
     })
@@ -159,26 +179,32 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
         const rows = normalizeRoomModes(list);
         setRoomModes(rows);
 
-        const collectiveSessions = rows.filter((m) => m.durationSeconds != null && m.type === "COOP");
-        const soloSessions = rows.filter(
-          (m) => m.durationSeconds != null && (m.type === "FFA" || m.type === "COMPETITIVE"),
-        );
-
-        if (collectiveSessions.length) {
-          setModeKind("collective");
-          const match = collectiveSessions.find((s) => s.durationSeconds === def) ?? collectiveSessions[0];
-          setSelectedSessionModeId(match.id);
-        } else if (soloSessions.length) {
-          setModeKind("solo");
-          const match = soloSessions.find((s) => s.durationSeconds === def) ?? soloSessions[0];
-          setSelectedSessionModeId(match.id);
+        const engineModes = rows.filter((m) => m.engineModeId && m.playable);
+        if (engineModes.length) {
+          setModeKind(engineModes[0].type === "COMPETITIVE" || engineModes[0].type === "FFA" ? "solo" : "collective");
+          setSelectedSessionModeId(engineModes[0].id);
         } else {
-          const hasCollective = rows.some((m) => m.type === "COOP");
-          const hasSolo = rows.some((m) => m.type === "FFA" || m.type === "COMPETITIVE");
-          if (hasCollective) setModeKind("collective");
-          else if (hasSolo) setModeKind("solo");
-          else setModeKind("collective");
-          setSelectedSessionModeId(null);
+          const collectiveSessions = rows.filter((m) => m.durationSeconds != null && m.type === "COOP");
+          const soloSessions = rows.filter(
+            (m) => m.durationSeconds != null && (m.type === "FFA" || m.type === "COMPETITIVE"),
+          );
+
+          if (collectiveSessions.length) {
+            setModeKind("collective");
+            const match = collectiveSessions.find((s) => s.durationSeconds === def) ?? collectiveSessions[0];
+            setSelectedSessionModeId(match.id);
+          } else if (soloSessions.length) {
+            setModeKind("solo");
+            const match = soloSessions.find((s) => s.durationSeconds === def) ?? soloSessions[0];
+            setSelectedSessionModeId(match.id);
+          } else {
+            const hasCollective = rows.some((m) => m.type === "COOP");
+            const hasSolo = rows.some((m) => m.type === "FFA" || m.type === "COMPETITIVE");
+            if (hasCollective) setModeKind("collective");
+            else if (hasSolo) setModeKind("solo");
+            else setModeKind("collective");
+            setSelectedSessionModeId(null);
+          }
         }
       } catch (e) {
         setLoadError(readApiUserError(e, "Не удалось загрузить данные"));
@@ -187,6 +213,12 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
       }
     })();
   }, [isOpen, target]);
+
+  const engineCatalogModes = useMemo(
+    () => roomModes.filter((m) => m.engineModeId && m.playable),
+    [roomModes],
+  );
+  const useEngineCatalog = engineCatalogModes.length > 0;
 
   const collectiveSessions = useMemo(
     () => roomModes.filter((m) => m.durationSeconds != null && m.type === "COOP"),
@@ -200,10 +232,10 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
     [roomModes],
   );
 
-  const sessionOptions = useMemo(
-    () => (modeKind === "collective" ? collectiveSessions : soloSessions),
-    [modeKind, collectiveSessions, soloSessions],
-  );
+  const sessionOptions = useMemo(() => {
+    if (useEngineCatalog) return engineCatalogModes;
+    return modeKind === "collective" ? collectiveSessions : soloSessions;
+  }, [useEngineCatalog, engineCatalogModes, modeKind, collectiveSessions, soloSessions]);
 
   useEffect(() => {
     if (!sessionOptions.length) {
@@ -389,19 +421,18 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
               <p className="text-sm text-danger">{loadError}</p>
             ) : (
               <>
-                <div className="flex flex-col gap-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Выбор сессии</p>
-                  {sessionOptions.length === 0 ? (
-                    <p className="text-sm text-text-secondary">
-                      Для комнаты не заданы сессии с длительностью (как при создании комнаты). Будет использован
-                      режим по умолчанию и длительность из настроек комнаты:{" "}
-                      <span className="text-white">{formatMinutesLabel(roomDefaultSeconds / 60)}</span>.
+                {useEngineCatalog ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+                      Режим с моноблока
                     </p>
-                  ) : (
+                    <p className="text-xs text-text-secondary">
+                      Список из каталога игры (Room API). Сессия на площадке — 10 мин.
+                    </p>
                     <div className="flex flex-wrap gap-2">
-                      {sessionOptions.map((s) => {
+                      {engineCatalogModes.map((s) => {
                         const selected = selectedSessionModeId === s.id;
-                        const sec = s.durationSeconds ?? 0;
+                        const kindLabel = s.type === "COOP" ? "coop" : "versus";
                         return (
                           <button
                             key={s.id}
@@ -412,60 +443,85 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
                             <span className="font-medium">{s.name}</span>
                             <span className={selected ? "text-black/65" : "text-text-secondary"}>
                               {" "}
-                              - {formatMinutesLabel(sec / 60)}
+                              · {kindLabel}
                             </span>
                           </button>
                         );
                       })}
                     </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Режим игры</p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={!hasSoloMode}
-                      title={
-                        !hasSoloMode
-                          ? "Для этой комнаты не создан одиночный режим (FFA). Добавьте комнату заново или создайте режим вручную."
-                          : undefined
-                      }
-                      onClick={() => setModeKind("solo")}
-                      className={`${chipBase} ${modeKind === "solo" ? chipOn : chipOff}`}
-                    >
-                      Одиночный
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!hasCollectiveMode}
-                      title={
-                        !hasCollectiveMode
-                          ? "Для этой комнаты не настроен коллективный режим (COOP)."
-                          : undefined
-                      }
-                      onClick={() => setModeKind("collective")}
-                      className={`${chipBase} ${modeKind === "collective" ? chipOn : chipOff}`}
-                    >
-                      Коллективный
-                    </button>
+                    {modeMissing ? (
+                      <p className="text-xs text-danger">Выберите режим</p>
+                    ) : null}
                   </div>
-                  {modeKind === "collective" && hasCollectiveMode && collectiveSessions.length === 0 ? (
-                    <p className="text-xs text-text-secondary">
-                      Коллективные сессии с длительностью не добавлены — будет выбран первый коллективный режим
-                      комнаты.
-                    </p>
-                  ) : null}
-                  {modeKind === "solo" && hasSoloMode && soloSessions.length === 0 ? (
-                    <p className="text-xs text-text-secondary">
-                      Одиночные сессии с длительностью не добавлены — будет выбран первый одиночный режим комнаты.
-                    </p>
-                  ) : null}
-                  {modeMissing ? (
-                    <p className="text-xs text-danger">Для этой комнаты не настроен выбранный режим</p>
-                  ) : null}
-                </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Выбор сессии</p>
+                      {sessionOptions.length === 0 ? (
+                        <p className="text-sm text-text-secondary">
+                          Каталог с моноблока ещё не пришёл (запустите Room Agent). Пока — длительность комнаты:{" "}
+                          <span className="text-white">{formatMinutesLabel(roomDefaultSeconds / 60)}</span>.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {sessionOptions.map((s) => {
+                            const selected = selectedSessionModeId === s.id;
+                            const sec = s.durationSeconds ?? 0;
+                            return (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => setSelectedSessionModeId(s.id)}
+                                className={`${chipBase} shrink-0 whitespace-nowrap ${selected ? chipOn : chipOff}`}
+                              >
+                                <span className="font-medium">{s.name}</span>
+                                <span className={selected ? "text-black/65" : "text-text-secondary"}>
+                                  {" "}
+                                  - {formatMinutesLabel(sec / 60)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Режим игры</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!hasSoloMode}
+                          title={
+                            !hasSoloMode
+                              ? "Для этой комнаты не создан одиночный режим (FFA)."
+                              : undefined
+                          }
+                          onClick={() => setModeKind("solo")}
+                          className={`${chipBase} ${modeKind === "solo" ? chipOn : chipOff}`}
+                        >
+                          Одиночный
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!hasCollectiveMode}
+                          title={
+                            !hasCollectiveMode
+                              ? "Для этой комнаты не настроен коллективный режим (COOP)."
+                              : undefined
+                          }
+                          onClick={() => setModeKind("collective")}
+                          className={`${chipBase} ${modeKind === "collective" ? chipOn : chipOff}`}
+                        >
+                          Коллективный
+                        </button>
+                      </div>
+                      {modeMissing ? (
+                        <p className="text-xs text-danger">Для этой комнаты не настроен выбранный режим</p>
+                      ) : null}
+                    </div>
+                  </>
+                )}
 
                 <div className="rounded-xl border border-surface-border/50 bg-[#1A2430]/80 p-4">
                   <p className="mb-3 text-xs font-medium uppercase tracking-wide text-text-secondary">Игроки</p>

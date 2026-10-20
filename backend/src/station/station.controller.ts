@@ -23,6 +23,8 @@ import { StationHeartbeatDto } from './dto/station-heartbeat.dto';
 import { AckCommandsDto } from './dto/ack-commands.dto';
 import { SessionMatchReportDto } from './dto/session-match-report.dto';
 import { ActivateByTokenDto } from './dto/activate-by-token.dto';
+import { IngestRoomEventsDto } from './dto/room-events.dto';
+import { UpsertRoomCatalogDto } from './dto/room-catalog.dto';
 import { GameSessionsService } from '../game-sessions/game-sessions.service';
 import { EndSessionDto } from '../game-sessions/dto/end-session.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -68,6 +70,30 @@ export class StationController {
     @Body() dto: AckCommandsDto,
   ) {
     return this.stationService.ackCommands(roomId, dto.commandIds);
+  }
+
+  @Post(':roomId/room-events')
+  @ApiOperation({
+    summary:
+      'Пакет событий журнала Room API v1 (agent ← GET /v1/events → CRM)',
+  })
+  ingestRoomEvents(
+    @Param('roomId', ParseUUIDPipe) roomId: string,
+    @Body() dto: IngestRoomEventsDto,
+  ) {
+    return this.stationService.ingestRoomEvents(roomId, dto.events);
+  }
+
+  @Post(':roomId/catalog')
+  @ApiOperation({
+    summary:
+      'Снимок GET /v1/catalog с моноблока → кэш Room + upsert GameMode (mode_id)',
+  })
+  upsertCatalog(
+    @Param('roomId', ParseUUIDPipe) roomId: string,
+    @Body() dto: UpsertRoomCatalogDto,
+  ) {
+    return this.stationService.upsertCatalog(roomId, dto);
   }
 
   @Post(':roomId/sessions/:sessionId/match-reports')

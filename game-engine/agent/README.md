@@ -1,45 +1,61 @@
-# Room Agent — канал CRM → UE
+# Room Agent — CRM ↔ Room API v1
 
-## Выбор: polling команд вместо WebSocket от бэкенда
+Агент на моноблоке комнаты. Игра поднимает **HTTP API** `http://127.0.0.1:8080/v1`
+(ключ `X-Room-Key`). Агент — клиент игры и клиент Nest CRM.
 
-Для MVP выбран **HTTP long-poll / короткий polling** (`GET /api/station/rooms/:roomId/commands`) вместо постоянного WebSocket от NestJS к агенту:
+## Потоки
 
-- Не нужен отдельный WS-сервер и sticky sessions на API.
-- Проще файрволы: исходящий HTTPS с ноутбука, как и остальные вызовы.
-- Команды буферизуются в PostgreSQL (`room_agent_commands`); при обрыве агент подтянет очередь после восстановления.
+1. **События игры → CRM**  
+   Long-poll `GET /v1/events?after=&wait=` → `POST /api/station/rooms/:roomId/room-events` → `POST /v1/events/ack`.
 
-При необходимости позже можно добавить Server-Sent Events или WS от CRM. В сторону текущего UE агент отправляет **реальный формат движка**: root-level JSON с полем `event`, например `{ "event": "session_start", "mode": "classic", "level": 1 }`.
+2. **Команды CRM → игра**  
+   Poll `GET /api/station/rooms/:roomId/commands` → HTTP в Room API по payload:
+   ```json
+   { "method": "POST", "path": "/lobby/players", "body": {...}, "idempotency_key": "uuid" }
+   ```
+   Затем `POST .../commands/ack`.
 
-## Поток
+3. **Heartbeat** → `POST /api/station/rooms/:roomId/heartbeat` (build из `GET /v1/room`).
+4. **Каталог** → `GET /v1/catalog` → `POST /api/station/rooms/:roomId/catalog` (старт + смена `catalog_hash`).
 
-1. Агент периодически вызывает `GET .../commands` с `Authorization: Bearer <STATION_API_KEY>`.
-2. Агент сам поднимает локальный WebSocket server `ws://localhost:8080/ws/laser`; UE уже является клиентом и подключается туда из `UOLDriverWSClient`.
-3. Для каждой команды агент проксирует `payload` команды в UE.
-4. После успешной доставки хотя бы одному UE-клиенту — `POST .../commands/ack` с массивом `commandIds`.
-5. Параллельно: `POST .../heartbeat`, приём событий от UE и прокси на `POST /api/station/rooms/{roomId}/sessions/{sessionId}/end`, `POST .../match-reports`, при старте игры — `POST .../sessions/activate-by-token` с `sessionToken`.
+## Типы событий (журнал)
+
+`room_online`, `room_status`, `lobby_changed`, `session_started`, `level_finished`, `session_finished`  
+Оболочка: `type` + `payload` + `cursor` / `event_id` (не старый flat `event`).
 
 ## Запуск
-
-Основной агент:
 
 ```powershell
 cd game-engine\agent
 $env:BACKEND_BASE_URL = "http://localhost:3000/api"
-$env:ROOM_ID = "<uuid комнаты>"
-$env:STATION_API_KEY = "station_live_dev_key_12345678901234567890"
+$env:ROOM_ID = "<uuid комнаты CRM>"
+$env:STATION_API_KEY = "<ключ станции>"
+$env:ROOM_API_BASE = "http://127.0.0.1:8080/v1"
+$env:ROOM_API_KEY = "dev"
 python room_agent.py
 ```
 
-UE должен быть запущен на той же машине: он подключится к `ws://localhost:8080/ws/laser`.
+С заглушкой договора:
 
-## Скрипт-пример
+```powershell
+python -m Tools.RoomAPI.mock_room --room lasers --port 8080 --key dev
+```
 
-См. [poll_commands.py](poll_commands.py) — только минимальный опрос/ack для диагностики. Для физического запуска комнаты используйте [room_agent.py](room_agent.py).
+(из корня репозитория `oyna-room-api` / game engine с Tools/RoomAPI.)
 
-Переменные окружения:
+## Env
 
 | Переменная | Пример |
 |------------|--------|
 | `BACKEND_BASE_URL` | `http://localhost:3000/api` |
 | `ROOM_ID` | UUID комнаты в CRM |
-| `STATION_API_KEY` | ключ, заданный админом |
+| `STATION_API_KEY` | ключ станции CRM |
+| `ROOM_API_BASE` | `http://127.0.0.1:8080/v1` |
+| `ROOM_API_KEY` | `dev` (или ключ из `room_api.json`) |
+| `EVENTS_WAIT_SEC` | `20` |
+| `POLL_INTERVAL_SEC` | `2` |
+
+## Замечания
+
+- `POST /v1/_dev/*` есть только у заглушки / virtual build. В зальной сборке 404 — агент ack’ает и не зацикливается; старт игры — кнопка на моноблоке.
+- Старый WS `ws://…/ws/laser` + `event: session_start` больше не используется этим агентом.
