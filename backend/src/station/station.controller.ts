@@ -96,6 +96,15 @@ export class StationController {
     return this.stationService.upsertCatalog(roomId, dto);
   }
 
+  @Post(':roomId/lobby-qr/refresh')
+  @ApiOperation({
+    summary:
+      'Принудительно выпустить QR лобби и PUT /v1/lobby/qr на моноблок (нужен PLAYER_APP_PUBLIC_URL)',
+  })
+  refreshLobbyQr(@Param('roomId', ParseUUIDPipe) roomId: string) {
+    return this.stationService.refreshLobbyQr(roomId);
+  }
+
   @Post(':roomId/sessions/:sessionId/match-reports')
   @ApiOperation({
     summary: 'Отчёт об уровне (идемпотентно по sessionId+level+attemptNumber)',

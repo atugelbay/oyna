@@ -1,6 +1,10 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { UpdateProfileDto } from './dto/update-profile.dto.js';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service.js";
+import { UpdateProfileDto } from "./dto/update-profile.dto.js";
 
 @Injectable()
 export class ProfileService {
@@ -12,7 +16,7 @@ export class ProfileService {
       include: { balance: true },
     });
 
-    if (!user) throw new NotFoundException('Пользователь не найден');
+    if (!user) throw new NotFoundException("Пользователь не найден");
 
     return {
       id: user.id,
@@ -31,16 +35,19 @@ export class ProfileService {
   async updateMe(userId: string, dto: UpdateProfileDto) {
     if (dto.nickname) {
       const existing = await this.prisma.user.findFirst({
-        where: { nickname: dto.nickname, NOT: { id: userId } },
+        where: {
+          nickname: { equals: dto.nickname.toLowerCase(), mode: "insensitive" },
+          NOT: { id: userId },
+        },
       });
-      if (existing) throw new ConflictException('Этот никнейм уже занят');
+      if (existing) throw new ConflictException("Этот никнейм уже занят");
     }
 
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
         ...(dto.name && { name: dto.name }),
-        ...(dto.nickname && { nickname: dto.nickname }),
+        ...(dto.nickname && { nickname: dto.nickname.toLowerCase() }),
         ...(dto.birthDate && { birthDate: new Date(dto.birthDate) }),
       },
       include: { balance: true },

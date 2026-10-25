@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, AlignLeft } from 'lucide-react';
 import { promosService } from '@/services/promos.service';
+import { apiError } from '@/lib/api-error';
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -31,9 +32,10 @@ export default function PromosPage() {
   const router = useRouter();
   const [promos, setPromos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    promosService.getActivePromos().then(setPromos).finally(() => setLoading(false));
+    promosService.getActivePromos().then(setPromos).catch(e => setError(apiError(e))).finally(() => setLoading(false));
   }, []);
 
   return (
@@ -46,11 +48,12 @@ export default function PromosPage() {
         <h1 className="text-lg font-bold text-white">Акции</h1>
       </div>
 
+      {error && <p role="alert" className="mx-4 rounded-xl bg-red-500/10 p-4 text-sm text-red-400">{error}<button onClick={() => window.location.reload()} className="mt-2 block min-h-11 text-brand">Повторить загрузку</button></p>}
       {loading ? (
         <div className="flex items-center justify-center pt-32">
           <div className="w-7 h-7 border-2 border-brand border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : promos.length === 0 ? (
+      ) : !error && promos.length === 0 ? (
         <div className="flex flex-col items-center justify-center pt-40 px-8 text-center">
           <AlignLeft size={32} className="text-gray-600 mb-4" />
           <p className="text-white font-semibold text-base mb-1">Нет доступных акций</p>

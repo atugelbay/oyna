@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsInt, IsUUID, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsInt,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 export class CreateRoomDto {
   @ApiProperty({ example: 'uuid-of-venue' })
@@ -27,6 +35,15 @@ export class CreateRoomDto {
   @IsInt()
   @Min(10)
   defaultLevelDuration?: number;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'true = virtual/mock (/_dev/select|/start). false = зал с железом: только lobby, старт на HUD',
+  })
+  @IsOptional()
+  @IsBoolean()
+  useDevCommands?: boolean;
 }
 
 

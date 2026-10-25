@@ -19,9 +19,10 @@ Room Agent
   ← GET /v1/events (journal)
   → POST /api/station/rooms/:roomId/room-events
 Nest
-  ← session_started → ACTIVE + engineSessionId
-  ← level_finished  → SessionMatchReport
-  ← session_finished → end + scores + debit
+  ← session_started → ACTIVE + engineSessionId + debit 10 мин
+  ← level_finished  → SessionMatchReport (+ unlocks_next → PlayerModeUnlock)
+  ← lobby_changed(exit_button / empty) → CANCELLED pending
+  ← session_finished → end + scores + PUT /hall_records
 ```
 
 ## Маршруты Nest (станция)
@@ -55,10 +56,11 @@ Launch UI показывает эти режимы как «Режим с мон
 
 | CRM действие | type | Room API |
 |--------------|------|----------|
-| `POST /game-sessions/start` | `room_api.lobby_add_player` (+ опц. `room_api.dev_select`) | `POST /lobby/players`, `POST /_dev/select` |
-| activate | `room_api.dev_start` | `POST /_dev/start` (только dev/mock) |
+| `POST /game-sessions/start` | `room_api.lobby_add_player` (+ `dev_select` если `Room.useDevCommands`) | `POST /lobby/players` (`minutes_left`, `unlocked`, `rating_month`, `rank_month`), опц. `POST /_dev/select` |
+| activate | `room_api.dev_start` | `POST /_dev/start` (только `useDevCommands`; зал — кнопка на HUD) |
 | cancel pending | `room_api.lobby_remove_player` | `DELETE /lobby/players/{id}` |
 | end с score=0 + есть `engineSessionId` | `room_api.session_stop` | `POST /session/stop` (финал ждём `session_finished`) |
+| после `session_finished` / `room_online` | `room_api.hall_records` | `PUT /hall_records` |
 | pause / resume | — | только таймер CRM |
 
 `mode_id` для `_dev/select` берётся из `GameMode.config.mode_id` (например `"lasers.corridor"`).
@@ -67,11 +69,12 @@ Launch UI показывает эти режимы как «Режим с мон
 
 | `type` | Действие CRM |
 |--------|----------------|
-| `room_online` | heartbeat build |
-| `lobby_changed` / `room_status` | пока ignore |
-| `session_started` | PENDING/ACTIVE → `engineSessionId`, status ACTIVE |
-| `level_finished` | upsert `SessionMatchReport` |
-| `session_finished` | `endSession` (очки из `payload.players[].total_score` / `total_score`) |
+| `room_online` | heartbeat + QR + `PUT /hall_records` |
+| `room_status` | ignore |
+| `lobby_changed` | `reason=exit_button` или пустые `players` → PENDING → CANCELLED; иначе ignore |
+| `session_started` | PENDING/ACTIVE → `engineSessionId`, ACTIVE, списание 10 мин (`balanceDebitedAt`) |
+| `level_finished` | upsert `SessionMatchReport`; при `unlocks_next` — открыть `level+1` в `PlayerModeUnlock` |
+| `session_finished` | `endSession` + `PUT /hall_records` |
 
 Связка сессий: `GameSession.engineSessionId` = `session_id` из Room API.
 
@@ -87,10 +90,12 @@ Launch UI показывает эти режимы как «Режим с мон
 
 | Prisma | Смысл |
 |--------|-------|
-| `PENDING` | Игроки поставлены в лобби, игра ещё не стартовала |
-| `ACTIVE` | `session_started` (или CRM activate) |
+| `PENDING` | Игроки в лобби; зал ждёт «НАЧАТЬ ИГРУ» на HUD |
+| `ACTIVE` | `session_started` (или CRM activate при `useDevCommands`) |
 | `COMPLETED` | `session_finished` / end |
 | `CANCELLED` | отмена лобби + remove players |
+
+`Room.useDevCommands`: **false** (зал) — только `lobby/players`, без `/_dev/*`. **true** (virtual/mock) — `dev_select` + `activate` → `dev_start`.
 
 ## Запуск агента
 

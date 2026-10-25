@@ -6,14 +6,14 @@ export const metadata: Metadata = {
   title: 'OYNA — Личный кабинет',
   description: 'Ваш личный кабинет в игровом центре OYNA',
   manifest: '/manifest.json',
+  icons: { icon: '/icon.svg' },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: '#111827',
+  viewportFit: 'cover',
+  themeColor: '#090D17',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -21,8 +21,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ru">
       <body>
         <AuthProvider>
-          <div className="flex justify-center min-h-screen bg-surface">
-            <div className="w-full max-w-mobile relative bg-surface min-h-screen">
+          <div className="flex justify-center">
+            <div className="app-shell w-full max-w-mobile relative">
               {children}
             </div>
           </div>

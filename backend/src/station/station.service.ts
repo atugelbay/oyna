@@ -12,6 +12,9 @@ import { SessionMatchReportDto } from './dto/session-match-report.dto';
 import { RoomApiEventDto } from './dto/room-events.dto';
 import { UpsertRoomCatalogDto } from './dto/room-catalog.dto';
 import { GameSessionsService } from '../game-sessions/game-sessions.service';
+import { LobbyQrService } from './lobby-qr.service';
+import { HallRecordsService } from './hall-records.service';
+import { PlayerLobbyService } from './player-lobby.service';
 
 @Injectable()
 export class StationService {
@@ -19,10 +22,13 @@ export class StationService {
     private prisma: PrismaService,
     @Inject(forwardRef(() => GameSessionsService))
     private gameSessions: GameSessionsService,
+    private lobbyQr: LobbyQrService,
+    private hallRecords: HallRecordsService,
+    private playerLobby: PlayerLobbyService,
   ) {}
 
   async heartbeat(roomId: string, dto: StationHeartbeatDto) {
-    return this.prisma.room.update({
+    const row = await this.prisma.room.update({
       where: { id: roomId },
       data: {
         lastHeartbeatAt: new Date(),
@@ -34,6 +40,14 @@ export class StationService {
         heartbeatBuildVersion: true,
       },
     });
+    // Тихо продлеваем QR, если скоро истечёт (без PUBLIC_URL — no-op).
+    await this.lobbyQr.refreshIfNeeded(roomId, 'heartbeat');
+    return row;
+  }
+
+  async refreshLobbyQr(roomId: string) {
+    const detail = await this.lobbyQr.pushLobbyQr(roomId, 'manual_refresh');
+    return { roomId, detail };
   }
 
   async listPendingCommands(roomId: string, limit = 50) {
@@ -260,8 +274,9 @@ export class StationService {
       case 'room_online':
         return this.onRoomOnline(crmRoomId, event);
       case 'room_status':
-      case 'lobby_changed':
         return 'ignored';
+      case 'lobby_changed':
+        return this.onLobbyChanged(crmRoomId, event);
       case 'session_started':
         return this.onSessionStarted(crmRoomId, event);
       case 'level_finished':
@@ -282,7 +297,34 @@ export class StationService {
         heartbeatBuildVersion: build,
       },
     });
-    return `build=${build}`;
+    const qr = await this.lobbyQr.pushLobbyQr(crmRoomId, 'room_online');
+    // Чтобы на HUD не висели локальные «—» / гостевые рекорды — сразу наши таблицы.
+    const hall = await this.hallRecords.pushForRoom(crmRoomId, 'room_online');
+    return `build=${build};${qr};${hall}`;
+  }
+
+  /**
+   * «ВЫЙТИ» / пустое лобби → отменить PENDING CRM-сессии (минуты не трогаем).
+   */
+  private async onLobbyChanged(crmRoomId: string, event: RoomApiEventDto) {
+    const payload = event.payload ?? {};
+    const reason = String(payload.reason ?? '');
+    const players = Array.isArray(payload.players) ? payload.players : null;
+    const emptyLobby = players !== null && players.length === 0;
+    if (reason !== 'exit_button' && !emptyLobby) {
+      return 'ignored';
+    }
+
+    const res = await this.prisma.gameSession.updateMany({
+      where: {
+        roomId: crmRoomId,
+        status: SessionStatus.PENDING,
+      },
+      data: { status: SessionStatus.CANCELLED },
+    });
+    return reason === 'exit_button'
+      ? `exit_button:cancelled=${res.count}`
+      : `lobby_empty:cancelled=${res.count}`;
   }
 
   private async onSessionStarted(crmRoomId: string, event: RoomApiEventDto) {
@@ -295,6 +337,7 @@ export class StationService {
       where: { engineSessionId },
     });
     if (existing) {
+      await this.gameSessions.debitBalanceOnSessionStart(existing.id);
       return `already_bound:${existing.id}`;
     }
 
@@ -330,15 +373,30 @@ export class StationService {
       });
     }
 
-    if (!session) {
-      throw new NotFoundException(
-        `No PENDING/ACTIVE CRM session for room to bind engineSessionId=${engineSessionId}`,
-      );
-    }
-
     const startedAt = event.payload?.started_at
       ? new Date(String(event.payload.started_at))
       : new Date();
+
+    // QR-only: игроки сели по QR без CRM start → создаём сессию из события.
+    if (!session) {
+      if (playerIds.length === 0) {
+        throw new NotFoundException(
+          `No CRM session and no account players in session_started for room=${crmRoomId}`,
+        );
+      }
+      const created = await this.createSessionFromRoomStart({
+        crmRoomId,
+        engineSessionId,
+        engineModeId:
+          typeof event.payload?.mode_id === 'string'
+            ? event.payload.mode_id
+            : null,
+        playerIds,
+        startedAt,
+      });
+      await this.gameSessions.debitBalanceOnSessionStart(created.id);
+      return `created_from_qr:${created.id}`;
+    }
 
     await this.prisma.gameSession.update({
       where: { id: session.id },
@@ -350,7 +408,62 @@ export class StationService {
       },
     });
 
+    // Канон: 10 мин списываем на реальном старте игры (идемпотентно).
+    await this.gameSessions.debitBalanceOnSessionStart(session.id);
+
     return `bound:${session.id}`;
+  }
+
+  /**
+   * Сеанс начат с HUD после QR-join (без PENDING из CRM).
+   * Режим — по payload.mode_id из каталога комнаты.
+   */
+  private async createSessionFromRoomStart(params: {
+    crmRoomId: string;
+    engineSessionId: string;
+    engineModeId: string | null;
+    playerIds: string[];
+    startedAt: Date;
+  }) {
+    const room = await this.prisma.room.findUnique({
+      where: { id: params.crmRoomId },
+      include: { modes: true },
+    });
+    if (!room) throw new NotFoundException('Room not found');
+
+    let mode =
+      params.engineModeId != null
+        ? room.modes.find((m) => {
+            const cfg =
+              m.config && typeof m.config === 'object' && !Array.isArray(m.config)
+                ? (m.config as Record<string, unknown>)
+                : null;
+            const mid = cfg?.mode_id ?? cfg?.modeId;
+            return mid === params.engineModeId;
+          })
+        : undefined;
+    if (!mode) {
+      mode = room.modes[0];
+    }
+    if (!mode) {
+      throw new BadRequestException(
+        `No GameMode for room=${params.crmRoomId} (sync catalog first)`,
+      );
+    }
+
+    return this.prisma.gameSession.create({
+      data: {
+        roomId: params.crmRoomId,
+        modeId: mode.id,
+        venueId: room.venueId,
+        engineSessionId: params.engineSessionId,
+        status: SessionStatus.ACTIVE,
+        startTime: params.startedAt,
+        players: {
+          create: params.playerIds.map((userId) => ({ userId })),
+        },
+      },
+    });
   }
 
   private async onLevelFinished(crmRoomId: string, event: RoomApiEventDto) {
@@ -367,6 +480,8 @@ export class StationService {
         ? (payload.score as Record<string, unknown>)
         : {};
     const finalScore = Number(score.total ?? 0);
+    const engineModeId =
+      typeof payload.mode_id === 'string' ? payload.mode_id : '';
 
     await this.recordMatchReport(crmRoomId, session.id, {
       level,
@@ -381,7 +496,22 @@ export class StationService {
       },
     });
 
-    return `match:${session.id}:L${level}:A${attemptNumber}`;
+    let unlockDetail = '';
+    if (payload.unlocks_next === true && engineModeId.includes('.')) {
+      const full = await this.prisma.gameSession.findUnique({
+        where: { id: session.id },
+        include: { players: true },
+      });
+      const userIds = (full?.players ?? []).map((p) => p.userId);
+      const u = await this.playerLobby.applyUnlocksNext({
+        userIds,
+        engineModeId,
+        clearedLevel: level,
+      });
+      unlockDetail = `;unlock=${u.unlockedLevel}:n=${u.updated}`;
+    }
+
+    return `match:${session.id}:L${level}:A${attemptNumber}${unlockDetail}`;
   }
 
   private async onSessionFinished(crmRoomId: string, event: RoomApiEventDto) {
@@ -437,7 +567,14 @@ export class StationService {
       results,
     });
 
-    return `ended:${session.id}`;
+    // После сеанса лобби снова пустое — обновить QR и таблицы рекордов на HUD.
+    const qr = await this.lobbyQr.pushLobbyQr(crmRoomId, 'session_finished');
+    const hall = await this.hallRecords.pushForRoom(
+      crmRoomId,
+      'session_finished',
+    );
+
+    return `ended:${session.id};${qr};${hall}`;
   }
 
   private async resolveCrmSession(

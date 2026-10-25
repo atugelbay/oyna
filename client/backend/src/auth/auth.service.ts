@@ -2,18 +2,17 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
-  Logger,
-} from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service.js';
-import { RegisterDto, RequestOtpDto, VerifyOtpDto, RefreshDto } from './dto/index.js';
-
-const MVP_OTP_CODE = '1234';
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
+import * as bcrypt from "bcrypt";
+import { PrismaService } from "../prisma/prisma.service.js";
+import { RegisterDto, LoginDto, RefreshDto } from "./dto/index.js";
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
+  // Also compare a valid hash for absent accounts so failed logins follow the same path.
+  private readonly dummyHash = bcrypt.hash("oyna-invalid-account", 12);
 
   constructor(
     private prisma: PrismaService,
@@ -22,129 +21,101 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    // Verify OTP before creating account
-    if (dto.code !== MVP_OTP_CODE) {
-      throw new UnauthorizedException('Неверный код подтверждения');
-    }
-
-    const normalizedPhone = this.normalizePhone(dto.phone);
-
+    const phone = this.normalizePhone(dto.phone)!;
+    const nickname = dto.nickname.toLowerCase();
     const existingPhone = await this.prisma.user.findUnique({
-      where: { phone: normalizedPhone },
+      where: { phone },
     });
-    if (existingPhone) {
-      throw new ConflictException('Этот номер телефона уже зарегистрирован');
-    }
-
-    const existingNick = await this.prisma.user.findUnique({
-      where: { nickname: dto.nickname },
+    if (existingPhone)
+      throw new ConflictException("Этот номер телефона уже зарегистрирован");
+    const existingNick = await this.prisma.user.findFirst({
+      where: { nickname: { equals: nickname, mode: "insensitive" } },
     });
-    if (existingNick) {
-      throw new ConflictException('Этот никнейм уже занят');
-    }
+    if (existingNick) throw new ConflictException("Этот никнейм уже занят");
 
-    const user = await this.prisma.user.create({
-      data: {
-        phone: normalizedPhone,
-        nickname: dto.nickname,
-        name: dto.name ?? dto.nickname,
-        birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
-        role: 'USER',
-        balance: {
-          create: { availableSeconds: 0 },
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+    let user;
+    try {
+      user = await this.prisma.user.create({
+        data: {
+          phone,
+          nickname,
+          passwordHash,
+          name: dto.name ?? nickname,
+          birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
+          role: "USER",
+          balance: { create: { availableSeconds: 0 } },
         },
-      },
-      include: { balance: true },
-    });
-
-    this.logger.log(`New player registered: ${user.phone} (${user.id})`);
-
-    const tokens = await this.generateTokens(user.id, user.phone, user.role);
-
+        include: { balance: true },
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "P2002") {
+        throw new ConflictException(
+          "Номер телефона или никнейм уже зарегистрирован",
+        );
+      }
+      throw error;
+    }
     return {
       user: this.formatUser(user, user.balance?.availableSeconds ?? 0),
-      ...tokens,
+      ...(await this.generateTokens(user.id, user.phone, user.role)),
     };
   }
 
-  async requestOtp(dto: RequestOtpDto) {
-    const normalizedPhone = this.normalizePhone(dto.phone);
-
-    // Check if existing user is blocked (don't block new registrations)
-    const user = await this.prisma.user.findUnique({
-      where: { phone: normalizedPhone },
-      select: { isActive: true, role: true },
-    });
-
-    if (user && !user.isActive) {
-      throw new UnauthorizedException('Аккаунт заблокирован');
-    }
-    if (user && user.role !== 'USER') {
-      throw new UnauthorizedException('Этот портал предназначен только для игроков');
-    }
-
-    this.logger.log(`OTP для ${normalizedPhone}: ${MVP_OTP_CODE}`);
-
-    return { message: 'OTP отправлен', phone: normalizedPhone };
-  }
-
-  async verifyOtp(dto: VerifyOtpDto) {
-    const normalizedPhone = this.normalizePhone(dto.phone);
-
-    if (dto.code !== MVP_OTP_CODE) {
-      throw new UnauthorizedException('Неверный код подтверждения');
-    }
-
-    const user = await this.prisma.user.findUnique({
-      where: { phone: normalizedPhone },
+  async login(dto: LoginDto) {
+    const identifier = dto.identifier.trim();
+    const phone = this.normalizePhone(identifier);
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { nickname: { equals: identifier, mode: "insensitive" } },
+          ...(phone ? [{ phone }] : []),
+        ],
+      },
       include: { balance: true },
     });
-
-    // New user — OTP is valid, but profile creation is needed
-    if (!user) {
-      return { needsProfile: true, phone: normalizedPhone };
+    const matches = await bcrypt.compare(
+      dto.password,
+      user?.passwordHash ?? (await this.dummyHash),
+    );
+    if (
+      !user ||
+      !user.passwordHash ||
+      !matches ||
+      !user.isActive ||
+      user.role !== "USER"
+    ) {
+      throw new UnauthorizedException("Неверный логин или пароль");
     }
-
-    if (!user.isActive) {
-      throw new UnauthorizedException('Аккаунт заблокирован');
-    }
-    if (user.role !== 'USER') {
-      throw new UnauthorizedException('Этот портал предназначен только для игроков');
-    }
-
-    const tokens = await this.generateTokens(user.id, user.phone, user.role);
-
     return {
-      needsProfile: false,
       user: this.formatUser(user, user.balance?.availableSeconds ?? 0),
-      ...tokens,
+      ...(await this.generateTokens(user.id, user.phone, user.role)),
     };
   }
 
   async refresh(dto: RefreshDto) {
     try {
       const payload = this.jwtService.verify(dto.refreshToken, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+        secret: this.configService.get<string>("JWT_REFRESH_SECRET"),
       });
-
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
       });
-
-      if (!user || !user.isActive || user.role !== 'USER') {
+      if (!user || !user.isActive || user.role !== "USER")
         throw new UnauthorizedException();
-      }
-
       return this.generateTokens(user.id, user.phone, user.role);
     } catch {
-      throw new UnauthorizedException('Невалидный refresh token');
+      throw new UnauthorizedException("Сессия истекла. Войдите ещё раз");
     }
   }
 
-  private normalizePhone(phone: string): string {
-    const digits = phone.replace(/\D/g, '');
-    const ten = digits.length >= 10 ? digits.slice(-10) : digits;
-    return ten ? `+7${ten}` : phone;
+  private normalizePhone(value: string): string | null {
+    if (!/^[+\d\s()-]+$/.test(value)) return null;
+    let digits = value.replace(/\D/g, "");
+    if (digits.length === 10) digits = `7${digits}`;
+    if (digits.length === 11 && digits.startsWith("8"))
+      digits = `7${digits.slice(1)}`;
+    return /^7\d{10}$/.test(digits) ? `+${digits}` : null;
   }
 
   private formatUser(user: any, balanceSeconds: number) {
@@ -162,18 +133,20 @@ export class AuthService {
 
   private async generateTokens(userId: string, phone: string, role: string) {
     const payload = { sub: userId, phone, role };
-
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
-        secret: this.configService.get<string>('JWT_ACCESS_SECRET')!,
-        expiresIn: this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') as any ?? '15m',
+        secret: this.configService.get<string>("JWT_ACCESS_SECRET")!,
+        expiresIn:
+          (this.configService.get<string>("JWT_ACCESS_EXPIRES_IN") as any) ??
+          "15m",
       }),
       this.jwtService.signAsync(payload, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET')!,
-        expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') as any ?? '7d',
+        secret: this.configService.get<string>("JWT_REFRESH_SECRET")!,
+        expiresIn:
+          (this.configService.get<string>("JWT_REFRESH_EXPIRES_IN") as any) ??
+          "7d",
       }),
     ]);
-
     return { accessToken, refreshToken };
   }
 }

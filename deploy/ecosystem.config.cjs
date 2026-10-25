@@ -9,6 +9,24 @@ const root = path.resolve(__dirname, "..");
 module.exports = {
   apps: [
     {
+      name: "oyna-client-api",
+      cwd: path.join(root, "client", "backend"),
+      script: "npm",
+      args: "run start:prod",
+      env: { NODE_ENV: "production", PORT: "3002" },
+      max_restarts: 10,
+      min_uptime: "10s",
+    },
+    {
+      name: "oyna-client-web",
+      cwd: path.join(root, "client", "frontend"),
+      script: "npm",
+      args: "run start",
+      env: { NODE_ENV: "production", PORT: "3003" },
+      max_restarts: 10,
+      min_uptime: "10s",
+    },
+    {
       name: "oyna-api",
       cwd: path.join(root, "backend"),
       script: "npm",

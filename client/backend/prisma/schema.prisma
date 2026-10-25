@@ -89,6 +89,7 @@ model User {
   transactions      Transaction[]
   scores            Score[]
   sessions          GameSessionPlayer[]
+  modeUnlocks       PlayerModeUnlock[]
   tournamentMembers TournamentMember[]
   tournamentResults TournamentResult[]
   staffVenues       StaffVenue[]
@@ -154,15 +155,53 @@ model Room {
   maxPlayers           Int    @default(5)
   defaultLevelDuration Int    @default(120)
 
+  /** Токен QR лобби (мобильный join); пишет CRM backend */
+  lobbyJoinToken     String?
+  lobbyJoinExpiresAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  venue    Venue         @relation(fields: [venueId], references: [id], onDelete: Cascade)
-  modes    GameMode[]
-  sessions GameSession[]
-  scores   Score[]
+  venue         Venue               @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  modes         GameMode[]
+  sessions      GameSession[]
+  scores        Score[]
+  agentCommands RoomAgentCommand[]
 
+  @@index([lobbyJoinToken])
   @@map("rooms")
+}
+
+/** Очередь команд CRM → Room Agent (пишет CRM или client join). */
+model RoomAgentCommand {
+  id          String    @id @default(uuid())
+  roomId      String
+  sessionId   String?
+  type        String
+  payload     Json
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, deliveredAt])
+  @@map("room_agent_commands")
+}
+
+model PlayerModeUnlock {
+  id            String @id @default(uuid())
+  userId        String
+  engineModeId  String
+  unlockedLevel Int    @default(1)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, engineModeId])
+  @@index([userId])
+  @@map("player_mode_unlocks")
 }
 
 model GameMode {

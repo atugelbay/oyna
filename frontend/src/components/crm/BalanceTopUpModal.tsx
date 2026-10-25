@@ -444,6 +444,21 @@ export function BalanceTopUpPanel({
 
     const canSubmit = totalSeconds >= 60 && baseOk;
 
+    let submitBlockReason: string | null = null;
+    if (!canSubmit) {
+      if (baseMode === "packages" && !selectedPackage) {
+        submitBlockReason =
+          "Нет пакетов цен для этой точки. Добавьте их в Настройки → Пакеты.";
+      } else if (baseMode === "individual" && perMinutePrice === null) {
+        submitBlockReason =
+          "Для индивидуальных минут нужна цена за минуту из пакета. Добавьте пакеты в Настройки → Пакеты.";
+      } else if (baseMinutes <= 0 || totalSeconds < 60) {
+        submitBlockReason = "Укажите не меньше 1 минуты";
+      } else {
+        submitBlockReason = "Невозможно оформить пополнение";
+      }
+    }
+
     return {
       baseMinutes,
       promoBonusMinutes,
@@ -455,6 +470,8 @@ export function BalanceTopUpPanel({
       totalSeconds,
       totalPay,
       canSubmit,
+      submitBlockReason,
+      perMinutePrice,
     };
   }, [baseMode, individualMinutes, loyaltyLevels, playerTotalScore, selectedPackage, selectedPromos]);
 
@@ -538,7 +555,8 @@ export function BalanceTopUpPanel({
                     />
                   </label>
                   {baseMode === "individual" ? (
-                    <div className="mt-3 flex items-center gap-2">
+                    <div className="mt-3 space-y-2">
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => setIndividualMinutes((m) => Math.max(0, m - 5))}
@@ -577,6 +595,17 @@ export function BalanceTopUpPanel({
                       >
                         +
                       </button>
+                    </div>
+                      {computed.perMinutePrice != null ? (
+                        <p className="text-[11px] text-text-muted">
+                          Тариф ≈ {Math.round(computed.perMinutePrice).toLocaleString("ru-RU")} ₸/мин
+                          {selectedPackage ? ` (из «${selectedPackage.name}»)` : ""}
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-danger">
+                          Нет пакетов цен — стоимость минуты неизвестна. Добавьте пакеты в настройках.
+                        </p>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -723,7 +752,7 @@ export function BalanceTopUpPanel({
                   }
 
                   if (!computed.canSubmit) {
-                    setError("Невозможно оформить пополнение");
+                    setError(computed.submitBlockReason ?? "Невозможно оформить пополнение");
                     return;
                   }
 

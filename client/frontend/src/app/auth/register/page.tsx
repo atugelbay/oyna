@@ -1,11 +1,4 @@
-'use client';
-
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-
-// Registration flow: welcome → verify OTP → /auth/profile
+import { AuthForm } from "@/components/auth/AuthForm";
 export default function RegisterPage() {
-  const router = useRouter();
-  useEffect(() => { router.replace('/welcome'); }, [router]);
-  return null;
+  return <AuthForm mode="register" />;
 }

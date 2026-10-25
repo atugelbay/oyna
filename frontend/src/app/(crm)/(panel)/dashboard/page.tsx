@@ -31,6 +31,8 @@ const dashboardContainerFill = "#19232E";
 type DashboardRoom = {
   id: string;
   name: string;
+  /** true = virtual/mock (CRM может activate). false = зал: старт на HUD */
+  useDevCommands?: boolean;
   status: "free" | "occupied" | "waiting";
   playerNickname?: string;
   waitingPlayerNicknames?: string[];
@@ -91,6 +93,7 @@ function normalizeDashboardRoom(raw: unknown): DashboardRoom {
   const base: DashboardRoom = {
     id,
     name,
+    useDevCommands: Boolean(r.useDevCommands ?? r.use_dev_commands),
     status: status === "free" || status === "occupied" || status === "waiting" ? status : "free",
     playerNickname: pickStr(r, "playerNickname", "player_nickname"),
     waitingPlayerNicknames: pickStrArray(r, "waitingPlayerNicknames", "waiting_player_nicknames") as
@@ -719,11 +722,16 @@ function RoomStatusRow({
   const handlePrimarySessionAction = async () => {
     if (busy) return;
     if (isWaiting) {
+      // Зал: старт только «НАЧАТЬ ИГРУ» на HUD — CRM activate даст 400.
+      if (!room.useDevCommands) return;
       if (!roomProp.pendingSessionToken) return;
       setBusy(true);
       try {
         await gameSessionsService.activateByToken(roomProp.pendingSessionToken);
         onSessionsChange?.();
+      } catch (e) {
+        console.error(e);
+        window.alert(readApiUserError(e, "Не удалось запустить сессию"));
       } finally {
         setBusy(false);
       }
@@ -755,7 +763,8 @@ function RoomStatusRow({
     }
   };
 
-  const waitingLabel = busy ? "Запуск…" : "Начать";
+  const hallAwaitsHud = isWaiting && !room.useDevCommands;
+  const waitingLabel = busy ? "Запуск…" : hallAwaitsHud ? "Ждём HUD" : "Начать";
 
   const occupiedShowComplete = Boolean(isOccupied && sessionId && canCountdown && timeIsUp);
   const occupiedPaused = Boolean(isOccupied && sessionId && room.pausedAt && !timeIsUp);
@@ -788,19 +797,33 @@ function RoomStatusRow({
         {isWaiting && (
           <>
             <span className="text-sm text-text-secondary min-w-0 sm:max-w-[min(100%,22rem)]">
-              Игроки в ожидании:{" "}
+              {hallAwaitsHud ? "Лобби на экране: " : "Игроки в ожидании: "}
               <span className="text-white">{formatWaitingPlayersLine(waitingNames)}</span>
+              {hallAwaitsHud ? (
+                <span className="mt-0.5 block text-xs text-text-muted">
+                  Режим и «НАЧАТЬ ИГРУ» — на моноблоке
+                </span>
+              ) : null}
             </span>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                disabled={busy || !roomProp.pendingSessionToken}
-                onClick={() => void handlePrimarySessionAction()}
-                className="inline-flex min-h-[2.25rem] min-w-[6rem] items-center justify-center gap-1.5 rounded-full bg-cyan px-3 py-1.5 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Play className="h-4 w-4 shrink-0 fill-current" />
-                <span className="whitespace-nowrap">{waitingLabel}</span>
-              </button>
+              {hallAwaitsHud ? (
+                <span
+                  className="inline-flex min-h-[2.25rem] min-w-[6rem] items-center justify-center gap-1.5 rounded-full border border-surface-border px-3 py-1.5 text-sm font-medium text-text-secondary"
+                  title="Старт только кнопкой на HUD комнаты"
+                >
+                  {waitingLabel}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy || !roomProp.pendingSessionToken}
+                  onClick={() => void handlePrimarySessionAction()}
+                  className="inline-flex min-h-[2.25rem] min-w-[6rem] items-center justify-center gap-1.5 rounded-full bg-cyan px-3 py-1.5 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Play className="h-4 w-4 shrink-0 fill-current" />
+                  <span className="whitespace-nowrap">{waitingLabel}</span>
+                </button>
+              )}
             </div>
           </>
         )}

@@ -174,6 +174,30 @@ async function main() {
   });
   console.log('Mega Grid: + COMPETITIVE mode');
 
+  const defaultPackages = [
+    { name: '30 минут', minutes: 30, costTenge: 1500 },
+    { name: '1 час', minutes: 60, costTenge: 3000 },
+    { name: '2 часа', minutes: 120, costTenge: 5000 },
+  ];
+  for (const venue of [forum, riviera]) {
+    for (const pkg of defaultPackages) {
+      const existing = await prisma.pricePackage.findFirst({
+        where: { venueId: venue.id, name: pkg.name, minutes: pkg.minutes },
+      });
+      if (existing) {
+        await prisma.pricePackage.update({
+          where: { id: existing.id },
+          data: { costTenge: pkg.costTenge },
+        });
+      } else {
+        await prisma.pricePackage.create({
+          data: { venueId: venue.id, ...pkg },
+        });
+      }
+    }
+    console.log(`Price packages: ${venue.name} (${defaultPackages.length})`);
+  }
+
   const userCount = await prisma.user.count();
   console.log(`\nUsers in DB: ${userCount}`);
   console.log('Seed completed!');

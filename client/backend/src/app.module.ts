@@ -9,6 +9,7 @@ import { PromosModule } from './promos/promos.module.js';
 import { LeaderboardModule } from './leaderboard/leaderboard.module.js';
 import { VenuesModule } from './venues/venues.module.js';
 import { TournamentsModule } from './tournaments/tournaments.module.js';
+import { LobbyModule } from './lobby/lobby.module.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { TournamentsModule } from './tournaments/tournaments.module.js';
     LeaderboardModule,
     VenuesModule,
     TournamentsModule,
+    LobbyModule,
   ],
 })
 export class AppModule {}

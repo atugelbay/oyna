@@ -1,0 +1,9 @@
+import Link from 'next/link';
+import { ArrowLeft, ScanLine, Wallet, Gamepad2, ArrowRight } from 'lucide-react';
+export default function HowToPlayPage() {
+  return <div className="mx-auto max-w-xl px-5 pt-7"><Link href="/home" className="mb-7 inline-flex min-h-11 items-center gap-2 text-sm text-slate-400"><ArrowLeft size={18} />В кабинет</Link><p className="eyebrow mb-3 !text-brand">От телефона к реальной игре</p><h1 className="text-4xl font-extrabold tracking-tight">Три шага.<br />И ты в игре.</h1><p className="mb-8 mt-3 text-sm leading-relaxed text-slate-400">Телефон — твой пропуск. Всё самое интересное происходит в комнате.</p><div className="space-y-3">{[
+    { icon: Wallet, title: 'Пополни баланс', text: 'Подойди на ресепшен. Для входа в лобби нужно минимум 10 минут. Минуты доступны во всех комнатах центра.' },
+    { icon: ScanLine, title: 'Отсканируй QR комнаты', text: 'Открой камеру телефона и наведи её на QR-код на экране комнаты. Перейди по ссылке и нажми «Войти в лобби».' },
+    { icon: Gamepad2, title: 'Начни на экране комнаты', text: 'Дождись своего ника в лобби. Выбери режим и нажми «НАЧАТЬ ИГРУ» на экране комнаты. 10 минут спишутся только при старте.' },
+  ].map(({ icon: Icon, title, text }, i) => <section key={title} className="panel p-5"><div className="mb-4 flex items-center justify-between"><Icon size={25} strokeWidth={1.5} className="text-brand" /><span className="eyebrow">ШАГ 0{i + 1}</span></div><h2 className="mb-2 text-lg font-bold">{title}</h2><p className="text-sm leading-relaxed text-slate-400">{text}</p></section>)}</div><Link href="/balance" className="mt-6 flex min-h-12 items-center justify-between rounded-xl bg-brand px-5 text-sm font-bold text-surface">Проверить баланс<ArrowRight size={18} /></Link><p className="mt-4 text-center text-xs text-slate-500">Код не открывается? Попроси помочь на ресепшене.</p></div>;
+}

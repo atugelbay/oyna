@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { profileService } from '@/services/profile.service';
+import { apiError } from '@/lib/api-error';
 
 // ── helpers ───────────────────────────────────────────────────────
 const PALETTE = ['#06b6d4', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#3b82f6'];
@@ -74,8 +75,7 @@ function EditField({
       await onSave(draft.trim());
       setEditing(false);
     } catch (e: any) {
-      const msg = e?.response?.data?.message;
-      setError(Array.isArray(msg) ? msg.join(', ') : msg ?? 'Ошибка сохранения');
+      setError(apiError(e, 'Ошибка сохранения'));
     } finally {
       setSaving(false);
     }
@@ -88,6 +88,7 @@ function EditField({
         <div className="flex items-center gap-2">
           <input
             type={type}
+            aria-label={label}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             maxLength={maxLength}
@@ -95,15 +96,15 @@ function EditField({
             className="flex-1 bg-transparent text-white text-sm outline-none border-b border-brand pb-0.5"
             onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }}
           />
-          <button onClick={cancel} className="text-gray-500 p-0.5"><X size={16} /></button>
-          <button onClick={save} disabled={saving} className="text-brand p-0.5">
+          <button onClick={cancel} aria-label="Отменить" className="text-gray-500 p-3"><X size={16} /></button>
+          <button onClick={save} aria-label="Сохранить" disabled={saving} className="text-brand p-3">
             {saving ? <div className="w-4 h-4 border-2 border-brand border-t-transparent rounded-full animate-spin" /> : <Check size={16} />}
           </button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
           <p className="text-white text-sm">{value || <span className="text-gray-600">Не указано</span>}</p>
-          <button onClick={start} className="text-gray-500 active:text-brand transition-colors p-0.5">
+          <button onClick={start} aria-label={`Изменить: ${label}`} className="text-gray-500 active:text-brand transition-colors p-3">
             <Edit3 size={15} />
           </button>
         </div>
@@ -120,11 +121,12 @@ export default function ProfilePage() {
 
   const [profile, setProfile] = useState<FullProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     profileService.getMe()
       .then(setProfile)
-      .catch(() => {})
+      .catch(e => setError(apiError(e)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -146,7 +148,10 @@ export default function ProfilePage() {
     );
   }
 
-  const p = profile ?? { loyaltyStatus: 'BRONZE', totalScore: 0, nickname: user?.nickname ?? '', phone: user?.phone ?? '', name: null, birthDate: null, balanceSeconds: 0, createdAt: '', id: '' };
+  if (error || !profile) {
+    return <div className="px-5 pt-8"><h1 className="mb-5 text-3xl font-extrabold">Профиль</h1><p role="alert" className="panel p-5 text-sm text-red-400">{error || 'Не удалось загрузить профиль.'}<button onClick={() => window.location.reload()} className="mt-3 block min-h-11 text-brand">Повторить загрузку</button></p></div>;
+  }
+  const p = profile;
   const ls = LOYALTY_STYLE[p.loyaltyStatus] ?? LOYALTY_STYLE['BRONZE'];
   const prog = getProgress(p.loyaltyStatus, p.totalScore);
   const color = avatarColor(p.nickname);

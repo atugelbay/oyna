@@ -1,0 +1,12 @@
+{
+  "name": "oyna",
+  "private": true,
+  "scripts": {
+    "dev:client": "node scripts/dev.mjs client",
+    "dev:crm": "node scripts/dev.mjs crm",
+    "dev": "node scripts/dev.mjs all",
+    "install:client": "npm --prefix client/backend ci && npm --prefix client/frontend ci",
+    "build:client": "npm --prefix client/backend run db:generate && npm --prefix client/backend run build && npm --prefix client/frontend run build",
+    "check:client": "npm --prefix client/frontend run typecheck"
+  }
+}

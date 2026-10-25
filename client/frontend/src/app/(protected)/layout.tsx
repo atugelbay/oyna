@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { BottomNav } from '@/components/layout/BottomNav';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -25,8 +26,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-surface">
+    <div className="protected-content min-h-screen bg-surface">
       {children}
+      <BottomNav />
     </div>
   );
 }

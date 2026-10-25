@@ -1,96 +1,87 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Phone } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
-import { useAuth } from '@/lib/auth-context';
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowRight, ScanLine, Zap } from "lucide-react";
+import { Brand } from "@/components/ui/Brand";
+import { useAuth } from "@/lib/auth-context";
+import { afterAuthentication, pendingLobby } from "@/lib/pending-lobby";
 
 export default function WelcomePage() {
   const router = useRouter();
-  const { requestOtp } = useAuth();
+  const { user, loading } = useAuth();
+  const [fromRoom, setFromRoom] = useState(false);
 
-  const [phone, setPhone] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  useEffect(() => {
+    setFromRoom(!!pendingLobby());
+    if (!loading && user) router.replace(afterAuthentication());
+  }, [user, loading, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!phone.trim()) { setError('Введите номер телефона'); return; }
-    setError('');
-    setLoading(true);
-    try {
-      await requestOtp(phone);
-      router.push(`/auth/verify?phone=${encodeURIComponent(phone)}`);
-    } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Что-то пошло не так');
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (loading || user) {
+    return (
+      <div role="status" className="p-10 text-center text-sm text-slate-400">
+        Открываем твой профиль…
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="min-h-screen flex flex-col bg-surface"
-      style={{
-        background: 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,208,255,0.08) 0%, #090D17 60%)',
-      }}
-    >
-      {/* Top area — logo */}
-      <div className="flex-1 flex flex-col items-center justify-center px-8 pt-20 pb-6">
-        {/* Tagline */}
-        <p className="text-gray-400 text-sm tracking-widest uppercase mb-4 text-center">
-          Начните новый профиль!
+    <main className="mx-auto flex min-h-[100dvh] max-w-[440px] flex-col px-6 pb-8 pt-8 md:min-h-[calc(100dvh-58px)] md:py-12">
+      <header className="flex items-center justify-between">
+        <Brand />
+        <span className="eyebrow rounded-full border border-white/10 px-3 py-2">
+          PLAYER CLUB
+        </span>
+      </header>
+      <div className="welcome-orbit" aria-hidden="true">
+        <i />
+        <ScanLine size={62} strokeWidth={1.2} className="relative text-brand" />
+        <span />
+        <span />
+      </div>
+      <div className="mb-8">
+        <p className="eyebrow mb-3 flex items-center gap-2">
+          <Zap size={12} className="text-brand" />
+          Твой следующий уровень
         </p>
-
-        {/* OYNA logo */}
-        <h1
-          className="text-7xl font-black tracking-tighter mb-2"
-          style={{
-            color: '#00D0FF',
-            textShadow: '0 0 30px rgba(0,208,255,0.5), 0 0 60px rgba(0,208,255,0.2)',
-            fontStyle: 'italic',
-          }}
-        >
-          OYNA
+        <h1 className="text-[44px] font-extrabold leading-[1.04] tracking-[-.055em]">
+          Меньше скролла.
+          <br />
+          <span className="text-brand">Больше игры.</span>
         </h1>
-
-        <p className="text-gray-500 text-sm text-center mt-2 mb-10">
-          Игровой центр нового поколения
-        </p>
-
-        {/* Phone form */}
-        <form onSubmit={handleSubmit} className="w-full space-y-3">
-          <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-              <Phone size={18} />
-            </span>
-            <input
-              type="tel"
-              placeholder="+7 700 000 00 00"
-              value={phone}
-              onChange={(e) => { setPhone(e.target.value); setError(''); }}
-              autoComplete="tel"
-              className="w-full bg-surface-input border border-white/10 rounded-xl pl-11 pr-4 py-4 text-white placeholder-gray-500 focus:outline-none focus:border-brand/50 transition-colors text-base"
-            />
-          </div>
-
-          {error && (
-            <p className="text-red-400 text-sm text-center">{error}</p>
-          )}
-
-          <Button type="submit" loading={loading}>
-            Продолжить
-          </Button>
-        </form>
-      </div>
-
-      {/* Bottom decoration */}
-      <div className="px-8 pb-10 text-center">
-        <p className="text-gray-600 text-xs leading-relaxed">
-          Нажимая «Продолжить», вы соглашаетесь с условиями использования
+        <p className="mt-4 text-sm leading-relaxed text-slate-400">
+          {fromRoom
+            ? "Твоя комната уже ждёт. Войди или создай аккаунт — затем присоединишься к лобби."
+            : "Твои минуты, результаты и место в рейтинге — в одном игровом профиле."}
         </p>
       </div>
-    </div>
+      <div className="space-y-3">
+        <Link
+          href="/auth/login"
+          className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-brand px-5 font-bold text-surface"
+        >
+          Войти
+          <ArrowRight size={18} />
+        </Link>
+        <Link
+          href="/auth/register"
+          className="flex min-h-14 items-center justify-center rounded-xl border border-white/15 bg-surface-card px-5 font-semibold text-white"
+        >
+          Зарегистрироваться
+        </Link>
+        <p className="pt-2 text-center text-xs text-slate-500">
+          Вход по никнейму или телефону и паролю
+        </p>
+      </div>
+      <footer className="mt-auto pt-10">
+        <div className="flex items-center gap-3 border-t border-white/10 pt-5">
+          <span className="h-2 w-2 rounded-full bg-[#ccfc64]" />
+          <p className="text-xs text-slate-500">
+            Реальные эмоции. Реальные рекорды.
+          </p>
+        </div>
+      </footer>
+    </main>
   );
 }

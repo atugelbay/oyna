@@ -3,9 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomAgentCommandsService } from '../station/room-agent-commands.service';
+import { PlayerLobbyService } from '../station/player-lobby.service';
+import {
+  engineModeIdFromGameMode,
+  roomApiCall,
+} from '../station/room-api.util';
 import { StartSessionDto } from './dto/start-session.dto';
 import { EndSessionDto } from './dto/end-session.dto';
 import {
@@ -18,30 +22,27 @@ import {
 /** Минимум на балансе у каждого игрока для старта сессии (10 мин) */
 const MIN_BALANCE_SECONDS = 600;
 
-/** Команда агенту: HTTP-вызов в Room API v1 на моноблоке. */
-function roomApiCall(
-  method: string,
-  path: string,
-  body: Record<string, unknown> | null = null,
-): Prisma.InputJsonObject {
-  return {
-    method,
-    path,
-    body: body as Prisma.InputJsonValue | null,
-    idempotency_key: randomUUID(),
-  };
-}
-
 function modeIdFromGameMode(mode: {
   name: string;
   config: Prisma.JsonValue | null;
 }): string | null {
+  return engineModeIdFromGameMode(mode);
+}
+
+function modePlayerLimits(mode: {
+  config: Prisma.JsonValue | null;
+}): { min: number; max: number } {
+  let min = 1;
+  let max = 16;
   if (mode.config && typeof mode.config === 'object' && !Array.isArray(mode.config)) {
     const cfg = mode.config as Record<string, unknown>;
-    const raw = cfg.mode_id ?? cfg.modeId;
-    if (typeof raw === 'string' && raw.includes('.')) return raw;
+    const mn = Number(cfg.min_players ?? cfg.minPlayers);
+    const mx = Number(cfg.max_players ?? cfg.maxPlayers);
+    if (Number.isFinite(mn) && mn >= 1) min = Math.floor(mn);
+    if (Number.isFinite(mx) && mx >= 1) max = Math.floor(mx);
+    if (max < min) max = min;
   }
-  return null;
+  return { min, max };
 }
 
 @Injectable()
@@ -49,6 +50,7 @@ export class GameSessionsService {
   constructor(
     private prisma: PrismaService,
     private roomAgentCommands: RoomAgentCommandsService,
+    private playerLobby: PlayerLobbyService,
   ) {}
 
   /** CRM может передать primary key или sessionToken (оба uuid) */
@@ -72,6 +74,17 @@ export class GameSessionsService {
       where: { id: dto.modeId },
     });
     if (!mode) throw new NotFoundException('Режим не найден');
+    if (mode.roomId !== dto.roomId) {
+      throw new BadRequestException('Режим не принадлежит этой комнате');
+    }
+
+    const limits = modePlayerLimits(mode);
+    const playerCount = dto.playerIds.length;
+    if (playerCount < limits.min || playerCount > limits.max) {
+      throw new BadRequestException(
+        `Режим «${mode.name}» требует от ${limits.min} до ${limits.max} игроков (сейчас ${playerCount})`,
+      );
+    }
 
     for (const playerId of dto.playerIds) {
       const balance = await this.prisma.accountBalance.findUnique({
@@ -111,37 +124,39 @@ export class GameSessionsService {
       },
     });
 
-    // Room API v1: CRM кладёт игроков в лобби моноблока; старт — кнопка на игре
-    // (или POST /v1/_dev/start в dev через activate).
-    for (const p of session.players) {
-      const balance = await this.prisma.accountBalance.findUnique({
-        where: { userId: p.userId },
-      });
-      const minutesLeft = balance
-        ? Math.floor(balance.availableSeconds / 60)
-        : null;
+    const engineModeId = modeIdFromGameMode(session.mode);
+    const useDev = Boolean(session.room.useDevCommands);
+
+    // Virtual/mock only: выбрать режим до посадки игроков.
+    if (useDev && engineModeId) {
       await this.roomAgentCommands.enqueue(
         session.roomId,
-        'room_api.lobby_add_player',
-        roomApiCall('POST', '/lobby/players', {
-          player_id: p.user.id,
-          nick: (p.user.nickname ?? p.user.name ?? 'Player').slice(0, 32),
-          minutes_left: minutesLeft,
-          source: 'operator',
+        'room_api.dev_select',
+        roomApiCall('POST', '/_dev/select', {
+          mode_id: engineModeId,
+          level: 1,
         }),
         session.id,
       );
     }
 
-    const modeId = modeIdFromGameMode(session.mode);
-    if (modeId) {
+    // Игроки в лобби моноблока (зал + virtual). Баланс здесь не списываем.
+    for (const p of session.players) {
+      const extras = await this.playerLobby.lobbyPlayerExtras(p.userId);
+      const body: Record<string, unknown> = {
+        player_id: p.user.id,
+        nick: (p.user.nickname ?? p.user.name ?? 'Player').slice(0, 32),
+        minutes_left: extras.minutes_left,
+        source: 'operator',
+      };
+      if (extras.unlocked) body.unlocked = extras.unlocked;
+      if (extras.rating_month != null) body.rating_month = extras.rating_month;
+      if (extras.rank_month != null) body.rank_month = extras.rank_month;
+
       await this.roomAgentCommands.enqueue(
         session.roomId,
-        'room_api.dev_select',
-        roomApiCall('POST', '/_dev/select', {
-          mode_id: modeId,
-          level: 1,
-        }),
+        'room_api.lobby_add_player',
+        roomApiCall('POST', '/lobby/players', body),
         session.id,
       );
     }
@@ -149,7 +164,12 @@ export class GameSessionsService {
     return {
       sessionId: session.id,
       sessionToken: session.sessionToken,
-      room: { id: session.room.id, name: session.room.name, type: session.room.type },
+      room: {
+        id: session.room.id,
+        name: session.room.name,
+        type: session.room.type,
+        useDevCommands: session.room.useDevCommands,
+      },
       mode: { id: session.mode.id, name: session.mode.name, type: session.mode.type, config: session.mode.config },
       players: session.players.map((p) => ({
         userId: p.user.id,
@@ -157,6 +177,8 @@ export class GameSessionsService {
         name: p.user.name,
       })),
       defaultLevelDuration: room.defaultLevelDuration,
+      /** Зал: ждать «НАЧАТЬ ИГРУ» на HUD; virtual: можно activate */
+      awaitsHudStart: !useDev,
     };
   }
 
@@ -165,6 +187,7 @@ export class GameSessionsService {
       where: { sessionToken },
       include: {
         mode: true,
+        room: true,
         players: {
           include: {
             user: { select: { id: true, nickname: true, name: true } },
@@ -178,6 +201,12 @@ export class GameSessionsService {
       throw new BadRequestException('Сессия уже запущена или завершена');
     }
 
+    if (!session.room.useDevCommands) {
+      throw new BadRequestException(
+        'Для зальной комнаты старт только кнопкой «НАЧАТЬ ИГРУ» на экране. Включите useDevCommands только для virtual/mock.',
+      );
+    }
+
     const updated = await this.prisma.gameSession.update({
       where: { id: session.id },
       data: {
@@ -186,6 +215,7 @@ export class GameSessionsService {
       },
       include: {
         mode: true,
+        room: true,
         players: {
           include: {
             user: { select: { id: true, nickname: true, name: true } },
@@ -194,7 +224,18 @@ export class GameSessionsService {
       },
     });
 
-    // Dev/mock: нажать «НАЧАТЬ ИГРУ». В зальной сборке /_dev/* → 404 — старт на моноблоке.
+    const engineModeId = modeIdFromGameMode(updated.mode);
+    if (engineModeId) {
+      await this.roomAgentCommands.enqueue(
+        updated.roomId,
+        'room_api.dev_select',
+        roomApiCall('POST', '/_dev/select', {
+          mode_id: engineModeId,
+          level: 1,
+        }),
+        updated.id,
+      );
+    }
     await this.roomAgentCommands.enqueue(
       updated.roomId,
       'room_api.dev_start',
@@ -203,6 +244,59 @@ export class GameSessionsService {
     );
 
     return updated;
+  }
+
+  /**
+   * Канон владельца: списать 10 мин каждому с аккаунтом на session_started.
+   * Идемпотентно по balanceDebitedAt.
+   */
+  async debitBalanceOnSessionStart(sessionId: string) {
+    const session = await this.prisma.gameSession.findUnique({
+      where: { id: sessionId },
+      include: { players: true },
+    });
+    if (!session) throw new NotFoundException('Сессия не найдена');
+    if (session.balanceDebitedAt) {
+      return { sessionId, alreadyDebited: true, deductedSeconds: session.deductedSeconds };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const player of session.players) {
+        const balance = await tx.accountBalance.findUnique({
+          where: { userId: player.userId },
+        });
+        if (!balance) continue;
+
+        const deduct = Math.min(MIN_BALANCE_SECONDS, balance.availableSeconds);
+        if (deduct <= 0) continue;
+
+        await tx.accountBalance.update({
+          where: { userId: player.userId },
+          data: { availableSeconds: { decrement: deduct } },
+        });
+        await tx.transaction.create({
+          data: {
+            userId: player.userId,
+            type: TransactionType.GAME_DEBIT,
+            source: TransactionSource.CASHIER,
+            amountTenge: 0,
+            equivalentSeconds: -deduct,
+            venueId: session.venueId,
+            description: `Старт сессии ${sessionId}: -${Math.ceil(deduct / 60)} мин`,
+          },
+        });
+      }
+
+      await tx.gameSession.update({
+        where: { id: sessionId },
+        data: {
+          balanceDebitedAt: new Date(),
+          deductedSeconds: MIN_BALANCE_SECONDS,
+        },
+      });
+    });
+
+    return { sessionId, alreadyDebited: false, deductedSeconds: MIN_BALANCE_SECONDS };
   }
 
   async pauseActiveSession(sessionId: string) {
@@ -336,13 +430,16 @@ export class GameSessionsService {
 
     const pk = session.id;
 
+    const alreadyDebited = Boolean(session.balanceDebitedAt);
+
     const result = await this.prisma.$transaction(async (tx) => {
       const updatedSession = await tx.gameSession.update({
         where: { id: pk },
         data: {
           status: SessionStatus.COMPLETED,
           endTime: new Date(),
-          deductedSeconds: dto.durationSeconds,
+          // Если уже списали на session_started — не затираем сумму списания длительностью.
+          ...(alreadyDebited ? {} : { deductedSeconds: dto.durationSeconds }),
         },
       });
 
@@ -365,28 +462,38 @@ export class GameSessionsService {
         });
       }
 
-      for (const player of session.players) {
-        const balance = await tx.accountBalance.findUnique({
-          where: { userId: player.userId },
-        });
-
-        if (balance) {
-          const deduct = Math.min(dto.durationSeconds, balance.availableSeconds);
-          await tx.accountBalance.update({
+      // Повторно не списываем: канон — 10 мин на session_started.
+      if (!alreadyDebited) {
+        for (const player of session.players) {
+          const balance = await tx.accountBalance.findUnique({
             where: { userId: player.userId },
-            data: { availableSeconds: { decrement: deduct } },
           });
 
-          await tx.transaction.create({
-            data: {
-              userId: player.userId,
-              type: TransactionType.GAME_DEBIT,
-              source: TransactionSource.CASHIER,
-              amountTenge: 0,
-              equivalentSeconds: -deduct,
-              venueId: session.venueId,
-              description: `Игровая сессия ${pk}: -${Math.ceil(deduct / 60)} мин`,
-            },
+          if (balance) {
+            const deduct = Math.min(dto.durationSeconds, balance.availableSeconds);
+            await tx.accountBalance.update({
+              where: { userId: player.userId },
+              data: { availableSeconds: { decrement: deduct } },
+            });
+
+            await tx.transaction.create({
+              data: {
+                userId: player.userId,
+                type: TransactionType.GAME_DEBIT,
+                source: TransactionSource.CASHIER,
+                amountTenge: 0,
+                equivalentSeconds: -deduct,
+                venueId: session.venueId,
+                description: `Игровая сессия ${pk}: -${Math.ceil(deduct / 60)} мин`,
+              },
+            });
+          }
+        }
+
+        if (!session.balanceDebitedAt) {
+          await tx.gameSession.update({
+            where: { id: pk },
+            data: { balanceDebitedAt: new Date() },
           });
         }
       }

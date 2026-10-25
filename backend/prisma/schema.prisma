@@ -90,6 +90,7 @@ model User {
   transactions       Transaction[]
   scores             Score[]
   sessions           GameSessionPlayer[]
+  modeUnlocks        PlayerModeUnlock[]
   tournamentMembers  TournamentMember[]
   tournamentResults  TournamentResult[]
   staffVenues        StaffVenue[]
@@ -97,6 +98,28 @@ model User {
   @@index([phone])
   @@index([nickname])
   @@map("users")
+}
+
+/**
+ * Открытый уровень по внешнему mode_id Room API (megagrid.jumps → 5).
+ * В POST /lobby/players уходит как unlocked: { "mode_id": level }.
+ */
+model PlayerModeUnlock {
+  id             String @id @default(uuid())
+  userId         String
+  /** Внешний mode_id из каталога игры, напр. lasers.corridor */
+  engineModeId   String
+  /** Высший открытый уровень (≥1) */
+  unlockedLevel  Int    @default(1)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, engineModeId])
+  @@index([userId])
+  @@map("player_mode_unlocks")
 }
 
 model AccountBalance {
@@ -168,6 +191,16 @@ model Room {
   catalogJson     Json?
   catalogSyncedAt DateTime?
 
+  /** Токен QR лобби (мобильный join); url собирается из PLAYER_APP_PUBLIC_URL */
+  lobbyJoinToken     String?
+  lobbyJoinExpiresAt DateTime?
+
+  /**
+   * true = mock/virtual: агент шлёт /_dev/select и /_dev/start.
+   * false (зал с железом) = только lobby/players; старт кнопкой на HUD.
+   */
+  useDevCommands Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -177,6 +210,7 @@ model Room {
   scores        Score[]
   agentCommands RoomAgentCommand[]
 
+  @@index([lobbyJoinToken])
   @@map("rooms")
 }
 
@@ -230,7 +264,10 @@ model GameSession {
   endTime         DateTime?
   /** CRM «Пауза»: таймер заморожен, при возобновлении startTime сдвигается */
   pausedAt        DateTime?
+  /** Секунды, списанные с баланса (по канону — 600 на session_started) */
   deductedSeconds Int           @default(0)
+  /** Когда списали 10 мин на старте (идемпотентность) */
+  balanceDebitedAt DateTime?
   status          SessionStatus @default(PENDING)
 
   createdAt DateTime @default(now())

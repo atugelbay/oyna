@@ -5,22 +5,22 @@ module.exports = {
     extend: {
       colors: {
         brand: {
-          DEFAULT: '#00D0FF',
+          DEFAULT: '#00E5FF',
           light: '#6EE7FF',
           dark: '#00A8CC',
         },
         surface: {
           DEFAULT: '#090D17',
-          card: '#111827',
-          elevated: '#1C2540',
-          input: '#141B2D',
+          card: '#101923',
+          elevated: '#182633',
+          input: '#121e2a',
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Arial', 'Helvetica', 'sans-serif'],
       },
       maxWidth: {
-        mobile: '430px',
+        mobile: '960px',
       },
       boxShadow: {
         cyan: '0 0 20px rgba(0, 208, 255, 0.25)',

@@ -2,7 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 * {
   box-sizing: border-box;
@@ -14,9 +13,38 @@ body {
   height: 100%;
   background-color: #090D17;
   color: #f9fafb;
-  font-family: 'Inter', system-ui, sans-serif;
-  overscroll-behavior: none;
+  font-family: Arial, Helvetica, sans-serif;
+  color-scheme: dark;
 }
+
+button, a, input, select { touch-action: manipulation; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 2px solid #00e5ff; outline-offset: 4px; }
+::selection { background: #00e5ff; color: #090d17; }
+.app-shell { min-height: 100dvh; background: #090d17; }
+.protected-content { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
+.protected-content > div { max-width: 960px; margin-inline: auto; }
+.bottom-nav { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.eyebrow { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; font-weight: 700; color: #9fb4c6; }
+.panel { background: #101923; border: 1px solid #263544; border-radius: 22px; }
+.balance-hero { position: relative; overflow: hidden; background: #00e5ff; color: #07202a; border-radius: 24px; }
+.balance-hero::after { content: ''; position: absolute; width: 190px; height: 190px; border: 1px solid #07202a26; border-radius: 50%; right: -65px; top: -40px; box-shadow: 0 0 0 25px #07202a09, 0 0 0 50px #07202a07, 0 0 0 75px #07202a05; pointer-events: none; }
+.arena-art { position: relative; overflow: hidden; isolation: isolate; background: #0b1d29; }
+.arena-art::before { content: ''; position: absolute; inset: -40%; z-index: -1; background-image: linear-gradient(#00e5ff26 1px, transparent 1px), linear-gradient(90deg, #00e5ff26 1px, transparent 1px); background-size: 36px 36px; transform: perspective(240px) rotateX(48deg) rotateZ(-24deg); mask-image: linear-gradient(transparent, black); }
+.arena-art::after { content: ''; position: absolute; inset: 0; z-index: -1; background: linear-gradient(110deg, #0b1d29 20%, transparent 100%); }
+.welcome-orbit { width: 230px; height: 230px; position: relative; margin: 38px auto 26px; display: grid; place-items: center; }
+.welcome-orbit::before, .welcome-orbit::after { content: ''; position: absolute; inset: 0; border: 1px solid #00e5ff30; border-radius: 50%; }
+.welcome-orbit::after { inset: 24px; border-style: dashed; transform: rotate(-25deg); }
+.welcome-orbit > i { position: absolute; inset: 48px; border: 1px solid #00e5ff60; border-radius: 34px; transform: rotate(-12deg); background: #00e5ff08; }
+.welcome-orbit > span { position: absolute; height: 10px; width: 10px; border-radius: 3px; background: #00e5ff; right: 22px; top: 30px; transform: rotate(18deg); box-shadow: 0 0 18px #00e5ff60; }
+.welcome-orbit > span:last-child { left: 20px; top: 175px; height: 7px; width: 7px; background: #ccfc64; }
+@media (min-width: 768px) {
+  body { padding: 28px 24px; background: #060a10; }
+  .app-shell { min-height: calc(100dvh - 56px); border: 1px solid #263544; border-radius: 28px; overflow: clip; }
+  .bottom-nav { bottom: 16px; width: calc(100% - 80px); border: 1px solid #263544; border-radius: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
 @layer utilities {
   .card {

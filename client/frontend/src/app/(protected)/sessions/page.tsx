@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Gamepad2, Trophy, Clock, MapPin } from 'lucide-react';
 import { sessionsService } from '@/services/sessions.service';
+import { apiError } from '@/lib/api-error';
 
 const STATUS_LABEL: Record<string, string> = {
   COMPLETED: 'Завершена',
@@ -25,6 +26,7 @@ export default function SessionsPage() {
   const [meta, setMeta] = useState({ page: 1, totalPages: 1, total: 0 });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     sessionsService.getMySessions(1, 20)
@@ -32,6 +34,7 @@ export default function SessionsPage() {
         setSessions(r.data);
         setMeta({ page: r.meta.page, totalPages: r.meta.totalPages, total: r.meta.total });
       })
+      .catch(e => setError(apiError(e)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -42,6 +45,8 @@ export default function SessionsPage() {
       const res = await sessionsService.getMySessions(meta.page + 1, 20);
       setSessions((p) => [...p, ...res.data]);
       setMeta({ page: res.meta.page, totalPages: res.meta.totalPages, total: res.meta.total });
+    } catch (e) {
+      setError(apiError(e));
     } finally {
       setLoadingMore(false);
     }
@@ -62,7 +67,8 @@ export default function SessionsPage() {
         <span className="text-gray-500 text-sm">{meta.total} игр</span>
       </div>
 
-      {sessions.length === 0 ? (
+      {error && <p role="alert" className="rounded-xl bg-red-500/10 p-4 text-sm text-red-400">{error}<button onClick={() => window.location.reload()} className="mt-2 block min-h-11 text-brand">Повторить загрузку</button></p>}
+      {!error && sessions.length === 0 ? (
         <div className="bg-surface-card rounded-2xl p-10 text-center">
           <Gamepad2 size={40} className="text-gray-600 mx-auto mb-4" />
           <p className="text-white font-semibold mb-1">Игр пока нет</p>

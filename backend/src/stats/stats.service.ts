@@ -188,6 +188,7 @@ export class StatsService {
           return {
             id: room.id,
             name: room.name,
+            useDevCommands: room.useDevCommands,
             status,
             sessionPlayerNicknames,
             sessionPlayerUserIds: activeSession.players.map((p) => String(p.userId)),
@@ -207,6 +208,7 @@ export class StatsService {
           return {
             id: room.id,
             name: room.name,
+            useDevCommands: room.useDevCommands,
             status,
             waitingPlayerNicknames,
             pendingSessionId: activeSession.id,
@@ -219,6 +221,7 @@ export class StatsService {
       return {
         id: room.id,
         name: room.name,
+        useDevCommands: room.useDevCommands,
         status,
         ...(playerNickname && { playerNickname }),
       };

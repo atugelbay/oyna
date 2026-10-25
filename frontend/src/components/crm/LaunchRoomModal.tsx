@@ -24,6 +24,8 @@ type RoomModeRow = {
   /** Внешний mode_id из Room API catalog (lasers.corridor, …) */
   engineModeId: string | null;
   playable: boolean;
+  minPlayers: number;
+  maxPlayers: number;
 };
 
 /** Минимум секунд на балансе у каждого игрока для подтверждения старта (10 мин) */
@@ -65,6 +67,8 @@ function normalizeRoomModes(list: unknown): RoomModeRow[] {
       let sortOrder: number | null = null;
       let engineModeId: string | null = null;
       let playable = true;
+      let minPlayers = 1;
+      let maxPlayers = 16;
       if (config && typeof config === "object" && config !== null) {
         const c = config as {
           durationSeconds?: unknown;
@@ -72,6 +76,10 @@ function normalizeRoomModes(list: unknown): RoomModeRow[] {
           mode_id?: unknown;
           modeId?: unknown;
           playable?: unknown;
+          min_players?: unknown;
+          minPlayers?: unknown;
+          max_players?: unknown;
+          maxPlayers?: unknown;
         };
         if (typeof c.durationSeconds === "number" && Number.isFinite(c.durationSeconds) && c.durationSeconds > 0) {
           durationSeconds = Math.round(c.durationSeconds);
@@ -86,6 +94,11 @@ function normalizeRoomModes(list: unknown): RoomModeRow[] {
         if (typeof c.playable === "boolean") {
           playable = c.playable;
         }
+        const mn = Number(c.min_players ?? c.minPlayers);
+        const mx = Number(c.max_players ?? c.maxPlayers);
+        if (Number.isFinite(mn) && mn >= 1) minPlayers = Math.floor(mn);
+        if (Number.isFinite(mx) && mx >= 1) maxPlayers = Math.floor(mx);
+        if (maxPlayers < minPlayers) maxPlayers = minPlayers;
       }
       return {
         id: o.id != null ? String(o.id) : "",
@@ -95,6 +108,8 @@ function normalizeRoomModes(list: unknown): RoomModeRow[] {
         sortOrder,
         engineModeId,
         playable,
+        minPlayers,
+        maxPlayers,
         _apiIndex: apiIndex,
       };
     })
@@ -133,6 +148,8 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
   const [loadError, setLoadError] = useState<string | null>(null);
   const [venueId, setVenueId] = useState<string | null>(null);
   const [roomDefaultSeconds, setRoomDefaultSeconds] = useState(120);
+  /** false = зал с железом: лобби из CRM, старт кнопкой на HUD */
+  const [useDevCommands, setUseDevCommands] = useState(false);
   const [roomModes, setRoomModes] = useState<RoomModeRow[]>([]);
   const [modeKind, setModeKind] = useState<"collective" | "solo">("collective");
   const [selectedSessionModeId, setSelectedSessionModeId] = useState<string | null>(null);
@@ -167,12 +184,14 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
         const r = room as {
           venueId?: string;
           defaultLevelDuration?: number;
+          useDevCommands?: boolean;
         };
         if (!r?.venueId) {
           setLoadError("У комнаты не указана площадка");
           return;
         }
         setVenueId(String(r.venueId));
+        setUseDevCommands(Boolean(r.useDevCommands));
         const def = typeof r.defaultLevelDuration === "number" ? r.defaultLevelDuration : 120;
         setRoomDefaultSeconds(def);
 
@@ -315,6 +334,18 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
     return roomDefaultSeconds;
   }, [roomModes, effectiveModeId, roomDefaultSeconds]);
 
+  const selectedModeRow = useMemo(
+    () => roomModes.find((m) => m.id === effectiveModeId) ?? null,
+    [roomModes, effectiveModeId],
+  );
+
+  const playerCountOk = useMemo(() => {
+    if (!selectedModeRow) return players.length >= 1;
+    return (
+      players.length >= selectedModeRow.minPlayers && players.length <= selectedModeRow.maxPlayers
+    );
+  }, [selectedModeRow, players.length]);
+
   const addPlayer = useCallback((p: PickedPlayer) => {
     setPlayers((prev) => {
       if (prev.some((x) => x.id === p.id)) return prev;
@@ -333,8 +364,20 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
       setSubmitError("Выберите сессию и режим");
       return;
     }
-    if (players.length < 1) {
-      setSubmitError("Добавьте хотя бы одного игрока");
+    if (!selectedModeRow) {
+      setSubmitError("Выберите режим");
+      return;
+    }
+    if (players.length < selectedModeRow.minPlayers) {
+      setSubmitError(
+        `Режим «${selectedModeRow.name}» требует минимум ${selectedModeRow.minPlayers} игроков`,
+      );
+      return;
+    }
+    if (players.length > selectedModeRow.maxPlayers) {
+      setSubmitError(
+        `Режим «${selectedModeRow.name}»: максимум ${selectedModeRow.maxPlayers} игроков`,
+      );
       return;
     }
     const shortBalance = players.filter(
@@ -352,12 +395,17 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
       if (selectedSessionSeconds !== roomDefaultSeconds) {
         await roomsService.update(target.id, { defaultLevelDuration: selectedSessionSeconds });
       }
-      await gameSessionsService.start({
+      const started = (await gameSessionsService.start({
         roomId: target.id,
         modeId: effectiveModeId,
         venueId,
         playerIds: players.map((p) => p.id),
-      });
+      })) as { sessionToken?: string; awaitsHudStart?: boolean };
+      // Virtual/mock: /_dev/start. Зал: только лобби — «НАЧАТЬ ИГРУ» на HUD.
+      const awaitsHud = Boolean(started?.awaitsHudStart) || !useDevCommands;
+      if (started?.sessionToken && !awaitsHud) {
+        await gameSessionsService.activateByToken(started.sessionToken);
+      }
       onSessionStarted?.();
       onClose();
     } catch (e) {
@@ -433,6 +481,10 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
                       {engineCatalogModes.map((s) => {
                         const selected = selectedSessionModeId === s.id;
                         const kindLabel = s.type === "COOP" ? "coop" : "versus";
+                        const seats =
+                          s.minPlayers === s.maxPlayers
+                            ? `${s.minPlayers} игр.`
+                            : `${s.minPlayers}–${s.maxPlayers} игр.`;
                         return (
                           <button
                             key={s.id}
@@ -443,14 +495,31 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
                             <span className="font-medium">{s.name}</span>
                             <span className={selected ? "text-black/65" : "text-text-secondary"}>
                               {" "}
-                              · {kindLabel}
+                              · {kindLabel} · {seats}
                             </span>
                           </button>
                         );
                       })}
                     </div>
+                    {selectedModeRow ? (
+                      <p className="text-xs text-text-secondary">
+                        Нужно игроков: {selectedModeRow.minPlayers}
+                        {selectedModeRow.minPlayers !== selectedModeRow.maxPlayers
+                          ? `–${selectedModeRow.maxPlayers}`
+                          : ""}
+                        {players.length > 0
+                          ? ` (выбрано ${players.length})`
+                          : ""}
+                      </p>
+                    ) : null}
                     {modeMissing ? (
                       <p className="text-xs text-danger">Выберите режим</p>
+                    ) : null}
+                    {selectedModeRow && !playerCountOk && players.length > 0 ? (
+                      <p className="text-xs text-danger">
+                        Для «{selectedModeRow.name}» нужно от {selectedModeRow.minPlayers} до{" "}
+                        {selectedModeRow.maxPlayers} игроков
+                      </p>
                     ) : null}
                   </div>
                 ) : (
@@ -653,20 +722,35 @@ export function LaunchRoomModal({ target, isOpen, onClose, onSessionStarted }: L
                   ) : null}
                   <p className="mt-2 text-xs text-text-muted">
                     В сессии игроков: {players.length} (минимум 1). У каждого — не менее {MIN_BALANCE_SECONDS / 60}{" "}
-                    мин на балансе.
+                    мин на балансе. Списание — при старте игры на экране.
                   </p>
                 </div>
+
+                {!useDevCommands ? (
+                  <p className="text-xs text-text-secondary">
+                    Зал с железом: игроки уйдут в лобби моноблока. Режим и «НАЧАТЬ ИГРУ» — на HUD комнаты.
+                  </p>
+                ) : null}
 
                 {submitError ? <p className="text-sm text-danger">{submitError}</p> : null}
 
                 <Button
                   type="button"
-                  disabled={submitting || modeMissing || players.length < 1 || hasPlayerBelowMinBalance}
+                  disabled={
+                    submitting ||
+                    modeMissing ||
+                    !playerCountOk ||
+                    hasPlayerBelowMinBalance
+                  }
                   onClick={() => void handleConfirm()}
                   className="inline-flex w-fit items-center gap-2"
                 >
                   <Check className="h-4 w-4 shrink-0" strokeWidth={2.5} />
-                  {submitting ? "Запуск…" : "Подтвердить"}
+                  {submitting
+                    ? "Запуск…"
+                    : useDevCommands
+                      ? "Подтвердить"
+                      : "Посадить в лобби"}
                 </Button>
               </>
             )}

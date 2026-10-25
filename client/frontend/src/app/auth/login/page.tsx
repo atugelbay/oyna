@@ -1,11 +1,4 @@
-'use client';
-
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-
-// Login is now handled on the /welcome page (unified phone entry flow)
+import { AuthForm } from "@/components/auth/AuthForm";
 export default function LoginPage() {
-  const router = useRouter();
-  useEffect(() => { router.replace('/welcome'); }, [router]);
-  return null;
+  return <AuthForm mode="login" />;
 }

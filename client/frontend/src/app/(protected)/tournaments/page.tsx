@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Trophy, Calendar, MapPin, Users, ChevronRight } from 'lucide-react';
 import api from '@/lib/api';
+import { apiError } from '@/lib/api-error';
 
 const STATUS_LABEL: Record<string, string> = {
   UPCOMING: 'Скоро',
@@ -32,11 +33,12 @@ export default function TournamentsPage() {
   const router = useRouter();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     api.get('/tournaments')
       .then((r) => setTournaments(r.data))
-      .catch(() => {})
+      .catch(e => setError(apiError(e)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -53,11 +55,12 @@ export default function TournamentsPage() {
         <h1 className="text-lg font-bold text-white">Турниры</h1>
       </div>
 
+      {error && <p role="alert" className="mx-4 rounded-xl bg-red-500/10 p-4 text-sm text-red-400">{error}<button onClick={() => window.location.reload()} className="mt-2 block min-h-11 text-brand">Повторить загрузку</button></p>}
       {loading ? (
         <div className="flex items-center justify-center pt-32">
           <div className="w-7 h-7 border-2 border-brand border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : tournaments.length === 0 ? (
+      ) : !error && tournaments.length === 0 ? (
         <div className="flex flex-col items-center justify-center pt-40 px-8 text-center">
           <Trophy size={32} className="text-gray-600 mb-4" />
           <p className="text-white font-semibold text-base mb-1">Нет активных турниров</p>

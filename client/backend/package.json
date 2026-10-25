@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "test:auth": "npm run build && node --test test/auth.test.cjs",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
@@ -13,8 +14,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "db:generate": "npx prisma generate",
-    "db:push": "npx prisma db push"
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
