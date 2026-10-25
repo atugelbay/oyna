@@ -109,9 +109,44 @@ export class LobbyService {
     if (rating_month != null) body.rating_month = rating_month;
     if (rank_month != null) body.rank_month = rank_month;
 
+    // CRM dashboard shows «waiting» only when a PENDING GameSession exists.
+    // QR join previously only pushed the player to the room HUD via agent.
+    let session = await this.prisma.gameSession.findFirst({
+      where: { roomId: room.id, status: SessionStatus.PENDING },
+      include: { players: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!session) {
+      const mode = await this.prisma.gameMode.findFirst({
+        where: { roomId: room.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!mode) {
+        throw new BadRequestException(
+          'У комнаты ещё нет режимов. Дождитесь синхронизации каталога с моноблока и повторите.',
+        );
+      }
+      session = await this.prisma.gameSession.create({
+        data: {
+          roomId: room.id,
+          modeId: mode.id,
+          venueId: room.venueId,
+          status: SessionStatus.PENDING,
+          players: { create: [{ userId }] },
+        },
+        include: { players: true },
+      });
+    } else if (!session.players.some((p) => p.userId === userId)) {
+      await this.prisma.gameSessionPlayer.create({
+        data: { sessionId: session.id, userId },
+      });
+    }
+
     await this.prisma.roomAgentCommand.create({
       data: {
         roomId: room.id,
+        sessionId: session.id,
         type: 'room_api.lobby_add_player',
         payload: {
           method: 'POST',
@@ -127,6 +162,7 @@ export class LobbyService {
       roomId: room.id,
       roomName: room.name,
       venueName: room.venue.name,
+      sessionId: session.id,
       minutesLeft: Math.floor(available / 60),
       message: 'Вы в лобби. На экране комнаты нажмите «НАЧАТЬ ИГРУ».',
     };

@@ -24,8 +24,10 @@ Env:
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
+import ssl
 import threading
 import time
 import urllib.error
@@ -42,6 +44,57 @@ def env(name: str, default: str | None = None) -> str:
     return value
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+_ssl_warned = False
+
+
+def ssl_context_for_url(url: str) -> ssl.SSLContext | None:
+    """SSL context for HTTPS CRM calls. Room API is usually plain HTTP.
+
+    On Windows, OpenSSL + the system store sometimes fails with
+    ``certificate has expired`` (expired legacy roots) while the browser
+    works. Prefer the Mozilla bundle from ``certifi`` when available.
+    """
+    if not url.lower().startswith("https://"):
+        return None
+    if not _env_flag("CRM_SSL_VERIFY", True):
+        global _ssl_warned
+        if not _ssl_warned:
+            print(
+                "WARN: CRM_SSL_VERIFY=0 — проверка сертификата CRM отключена "
+                "(только для отладки на моноблоке)."
+            )
+            _ssl_warned = True
+        return ssl._create_unverified_context()
+
+    # Prefer explicit CA file if set (SSL_CERT_FILE / REQUESTS_CA_BUNDLE).
+    cafile = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if not cafile:
+        try:
+            import certifi  # type: ignore
+
+            cafile = certifi.where()
+        except Exception:
+            cafile = None
+
+    if cafile:
+        ctx = ssl.create_default_context(cafile=cafile)
+        return ctx
+
+    print(
+        "WARN: пакет certifi не установлен — используется системный CA store. "
+        "Если видишь CERTIFICATE_VERIFY_FAILED: pip install certifi "
+        "или временно CRM_SSL_VERIFY=0"
+    )
+    return ssl.create_default_context()
+
+
 def http_json(
     method: str,
     url: str,
@@ -55,9 +108,21 @@ def http_json(
     if body is not None:
         req_headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8")
-        return json.loads(raw) if raw else None
+    ctx = ssl_context_for_url(url)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw) if raw else None
+    except ssl.SSLCertVerificationError as exc:
+        print(
+            "SSL verify failed for",
+            url,
+            "| local time:",
+            datetime.datetime.now().isoformat(timespec="seconds"),
+            "| tip: sync Windows clock, or set CRM_SSL_VERIFY=0 for debug;",
+            "browser trust store != Python.",
+        )
+        raise exc
 
 
 def crm_json(

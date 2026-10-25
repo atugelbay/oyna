@@ -54,6 +54,26 @@ python -m Tools.RoomAPI.mock_room --room lasers --port 8080 --key dev
 | `ROOM_API_KEY` | `dev` (или ключ из `room_api.json`) |
 | `EVENTS_WAIT_SEC` | `20` |
 | `POLL_INTERVAL_SEC` | `2` |
+| `CRM_SSL_VERIFY` | `1` (по умолчанию). `0` — не проверять HTTPS-серт CRM (только отладка) |
+
+## SSL на моноблоке
+
+Браузер может открывать `https://api.oyna.pro`, а Python — нет: на Windows OpenSSL
+иногда падает на просроченном корне в системном store (`certificate has expired`),
+хотя сайт в Chrome нормальный.
+
+**Фикс (рекомендуется):**
+
+```powershell
+pip install -U certifi
+python -c "import certifi,ssl,urllib.request; ctx=ssl.create_default_context(cafile=certifi.where()); print(urllib.request.urlopen('https://api.oyna.pro/api/docs', context=ctx).status)"
+```
+
+Агент сам подхватит `certifi`, если пакет установлен. Временно без проверки:
+
+```powershell
+$env:CRM_SSL_VERIFY = "0"
+```
 
 ## Замечания
 
