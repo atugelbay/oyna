@@ -40,8 +40,23 @@ export default function RoomsPage() {
   const [stationKeyRoom, setStationKeyRoom] = useState<RoomRow | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [copiedRoomId, setCopiedRoomId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { confirmDelete, dialog: deleteDialog } = useConfirmDelete();
+
+  async function copyRoomId(roomId: string) {
+    try {
+      await navigator.clipboard.writeText(roomId);
+      setCopiedRoomId(roomId);
+      setMenuOpenId(null);
+      window.setTimeout(() => {
+        setCopiedRoomId((id) => (id === roomId ? null : id));
+      }, 1500);
+    } catch {
+      setError("Не удалось скопировать ID — выделите вручную под названием комнаты");
+      setMenuOpenId(null);
+    }
+  }
 
   useEffect(() => {
     if (!menuOpenId) return;
@@ -171,7 +186,15 @@ export default function RoomsPage() {
                       key={room.id}
                       className="border-b border-surface-border/50 last:border-0 hover:bg-bg-card/50 transition-colors"
                     >
-                      <td className="py-3 px-4 font-medium text-text-primary align-middle">{room.name}</td>
+                      <td className="py-3 px-4 align-middle">
+                        <p className="font-medium text-text-primary">{room.name}</p>
+                        <p
+                          className="mt-0.5 max-w-[14rem] truncate font-mono text-[11px] text-text-muted"
+                          title={room.id}
+                        >
+                          {copiedRoomId === room.id ? "ID скопирован" : room.id}
+                        </p>
+                      </td>
                       <td className="py-3 px-4 text-text-primary align-middle">
                         {!sessionsText ? (
                           <span className="text-text-muted">—</span>
@@ -224,6 +247,14 @@ export default function RoomsPage() {
                                 onClick={() => openEdit(room)}
                               >
                                 Редактировать
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="block w-full px-4 py-2.5 text-left text-sm text-text-primary hover:bg-white/5"
+                                onClick={() => void copyRoomId(room.id)}
+                              >
+                                Копировать ID
                               </button>
                               {isAdmin ? (
                                 <button
