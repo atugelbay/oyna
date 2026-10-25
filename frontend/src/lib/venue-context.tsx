@@ -20,6 +20,7 @@ type CrmVenueContextValue = {
   selectedVenueId: string | null;
   selectedVenue: CrmVenue | null;
   setSelectedVenueId: (id: string) => void;
+  refreshVenues: (preferId?: string | null) => Promise<void>;
   loading: boolean;
 };
 
@@ -30,22 +31,38 @@ export function CrmVenueProvider({ children }: { children: ReactNode }) {
   const [selectedVenueId, setSelectedVenueIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const applyVenueList = useCallback((list: CrmVenue[], preferId?: string | null) => {
+    setVenues(list);
+    const stored =
+      typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+    const preferred =
+      preferId && list.some((v) => v.id === preferId) ? preferId : null;
+    const validStored = stored && list.some((v) => v.id === stored) ? stored : null;
+    const initial = preferred ?? validStored ?? list[0]?.id ?? null;
+    setSelectedVenueIdState(initial);
+    if (initial && typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEY, initial);
+    } else if (typeof window !== "undefined" && !initial) {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, []);
+
+  const refreshVenues = useCallback(
+    async (preferId?: string | null) => {
+      const data = await venuesService.list();
+      const list = Array.isArray(data) ? (data as CrmVenue[]) : [];
+      applyVenueList(list, preferId ?? selectedVenueId);
+    },
+    [applyVenueList, selectedVenueId],
+  );
+
   useEffect(() => {
     let cancelled = false;
     venuesService
       .list()
       .then((data: CrmVenue[]) => {
         if (cancelled) return;
-        const list = Array.isArray(data) ? data : [];
-        setVenues(list);
-        const stored =
-          typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-        const validStored = stored && list.some((v) => v.id === stored) ? stored : null;
-        const initial = validStored ?? list[0]?.id ?? null;
-        setSelectedVenueIdState(initial);
-        if (initial && typeof window !== "undefined") {
-          localStorage.setItem(STORAGE_KEY, initial);
-        }
+        applyVenueList(Array.isArray(data) ? data : []);
       })
       .catch(() => {
         if (!cancelled) {
@@ -59,7 +76,7 @@ export function CrmVenueProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyVenueList]);
 
   const setSelectedVenueId = useCallback((id: string) => {
     setSelectedVenueIdState(id);
@@ -79,9 +96,10 @@ export function CrmVenueProvider({ children }: { children: ReactNode }) {
       selectedVenueId,
       selectedVenue,
       setSelectedVenueId,
+      refreshVenues,
       loading,
     }),
-    [venues, selectedVenueId, selectedVenue, setSelectedVenueId, loading],
+    [venues, selectedVenueId, selectedVenue, setSelectedVenueId, refreshVenues, loading],
   );
 
   return <CrmVenueContext.Provider value={value}>{children}</CrmVenueContext.Provider>;

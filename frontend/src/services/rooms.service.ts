@@ -39,4 +39,9 @@ export const roomsService = {
     const { data } = await api.delete(`/rooms/${id}`);
     return data;
   },
+
+  async setStationApiKey(id: string, apiKey: string) {
+    const { data } = await api.post(`/rooms/${id}/station-api-key`, { apiKey });
+    return data;
+  },
 };

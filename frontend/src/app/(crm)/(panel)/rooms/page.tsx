@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { AddRoomModal } from "@/components/crm/AddRoomModal";
+import { StationApiKeyModal } from "@/components/crm/StationApiKeyModal";
 import { readApiUserError } from "@/lib/api-error-message";
 import { roomsService } from "@/services/rooms.service";
 import { useCrmVenue } from "@/lib/venue-context";
+import { useAuth } from "@/lib/auth-context";
 import { uniqueSessionsFromModes, formatSessionsOneLine } from "@/lib/room-sessions";
 import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
 
@@ -22,15 +25,19 @@ type RoomRow = {
   defaultLevelDuration?: number;
   modes?: GameModeRow[];
   status?: "free" | "occupied" | "waiting";
+  hasStationApiKey?: boolean;
 };
 
 export default function RoomsPage() {
   const { selectedVenueId, loading: venuesLoading } = useCrmVenue();
+  const { user } = useAuth();
+  const isAdmin = user?.role?.toUpperCase() === "ADMIN";
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<RoomRow | null>(null);
+  const [stationKeyRoom, setStationKeyRoom] = useState<RoomRow | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -129,8 +136,11 @@ export default function RoomsPage() {
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       {!selectedVenueId ? (
-        <div className="rounded-xl bg-bg-secondary py-12 text-center text-text-muted">
-          Выберите площадку в шапке CRM
+        <div className="rounded-xl bg-bg-secondary space-y-3 py-12 text-center text-text-muted">
+          <p>Нет площадки. Создайте её в Настройки → Площадки.</p>
+          <Link href="/settings/venues" className="inline-block text-sm font-medium text-cyan hover:underline">
+            Перейти к площадкам
+          </Link>
         </div>
       ) : (
         <div className="rounded-xl border border-surface-border bg-[#19232E] overflow-x-auto">
@@ -140,13 +150,14 @@ export default function RoomsPage() {
                 <th className="py-3 px-4 font-medium w-[22%]">Название комнаты</th>
                 <th className="py-3 px-4 font-medium min-w-0">Сессии</th>
                 <th className="py-3 px-4 font-medium whitespace-nowrap w-[7rem]">Статус</th>
+                <th className="py-3 px-4 font-medium whitespace-nowrap w-[8rem]">Agent</th>
                 <th className="py-3 px-4 w-14 font-medium text-right" aria-label="Действия" />
               </tr>
             </thead>
             <tbody>
               {rooms.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-12 text-center text-text-muted">
+                  <td colSpan={5} className="py-12 text-center text-text-muted">
                     Нет комнат — нажмите «Добавить»
                   </td>
                 </tr>
@@ -180,6 +191,13 @@ export default function RoomsPage() {
                           <span className="text-success font-medium">Свободно</span>
                         )}
                       </td>
+                      <td className="py-3 px-4 align-middle whitespace-nowrap">
+                        {room.hasStationApiKey ? (
+                          <span className="text-success font-medium">Ключ задан</span>
+                        ) : (
+                          <span className="text-text-muted">Нет ключа</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4 align-middle text-right">
                         <div className="relative inline-flex justify-end" ref={menuOpenId === room.id ? menuRef : undefined}>
                           <button
@@ -196,7 +214,7 @@ export default function RoomsPage() {
                           </button>
                           {menuOpenId === room.id ? (
                             <div
-                              className="absolute right-0 top-full z-30 mt-1 min-w-[10rem] rounded-xl border border-surface-border bg-[#1F2B38] py-1 shadow-xl"
+                              className="absolute right-0 top-full z-30 mt-1 min-w-[12rem] rounded-xl border border-surface-border bg-[#1F2B38] py-1 shadow-xl"
                               role="menu"
                             >
                               <button
@@ -207,6 +225,19 @@ export default function RoomsPage() {
                               >
                                 Редактировать
                               </button>
+                              {isAdmin ? (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="block w-full px-4 py-2.5 text-left text-sm text-text-primary hover:bg-white/5"
+                                  onClick={() => {
+                                    setStationKeyRoom(room);
+                                    setMenuOpenId(null);
+                                  }}
+                                >
+                                  Ключ Room Agent
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 role="menuitem"
@@ -262,6 +293,16 @@ export default function RoomsPage() {
               : null
           }
           onAdded={refreshRooms}
+        />
+      ) : null}
+      {stationKeyRoom ? (
+        <StationApiKeyModal
+          isOpen
+          roomId={stationKeyRoom.id}
+          roomName={stationKeyRoom.name}
+          hasKey={Boolean(stationKeyRoom.hasStationApiKey)}
+          onClose={() => setStationKeyRoom(null)}
+          onSaved={refreshRooms}
         />
       ) : null}
       {deleteDialog}

@@ -9,10 +9,12 @@ export class RoomsService {
   constructor(private prisma: PrismaService) {}
 
   async create(dto: CreateRoomDto) {
-    return this.prisma.room.create({
+    const room = await this.prisma.room.create({
       data: dto,
       include: { venue: true },
     });
+    const { stationApiKeyHash, ...rest } = room;
+    return { ...rest, hasStationApiKey: Boolean(stationApiKeyHash) };
   }
 
   async findByVenue(venueId: string) {
@@ -49,8 +51,14 @@ export class RoomsService {
         }
       }
 
-      const { sessions, ...roomData } = room;
-      return { ...roomData, status, playerNickname, playerId };
+      const { sessions, stationApiKeyHash, ...roomData } = room;
+      return {
+        ...roomData,
+        hasStationApiKey: Boolean(stationApiKeyHash),
+        status,
+        playerNickname,
+        playerId,
+      };
     });
   }
 
@@ -60,16 +68,19 @@ export class RoomsService {
       include: { venue: true, modes: true },
     });
     if (!room) throw new NotFoundException('Комната не найдена');
-    return room;
+    const { stationApiKeyHash, ...rest } = room;
+    return { ...rest, hasStationApiKey: Boolean(stationApiKeyHash) };
   }
 
   async update(id: string, dto: UpdateRoomDto) {
     await this.findOne(id);
-    return this.prisma.room.update({
+    const room = await this.prisma.room.update({
       where: { id },
       data: dto,
       include: { venue: true, modes: true },
     });
+    const { stationApiKeyHash, ...rest } = room;
+    return { ...rest, hasStationApiKey: Boolean(stationApiKeyHash) };
   }
 
   async remove(id: string) {
