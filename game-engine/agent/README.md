@@ -23,11 +23,21 @@
 `room_online`, `room_status`, `lobby_changed`, `session_started`, `level_finished`, `session_finished`  
 Оболочка: `type` + `payload` + `cursor` / `event_id` (не старый flat `event`).
 
-## Запуск
+## Запуск (для сотрудников — один клик)
+
+1. Один раз: скопировать `.env.example` → `.env`, вписать `ROOM_ID` и `STATION_API_KEY` (из CRM).
+2. Двойной клик по **`start_room_agent.bat`** (или ярлык на рабочий стол).
+3. Окно оставить открытым, пока зал работает. Сначала лучше запустить **игру**, потом агент.
+
+Переменные из PowerShell (`$env:...`) **сбрасываются** после закрытия окна / перезагрузки.  
+Храните их в **`.env`** рядом с `room_agent.py` — bat подхватывает файл сам.
+
+### Запуск из терминала (отладка)
 
 ```powershell
 cd game-engine\agent
-$env:BACKEND_BASE_URL = "http://localhost:3000/api"
+# либо заполненный .env, либо вручную:
+$env:BACKEND_BASE_URL = "https://api.oyna.pro/api"
 $env:ROOM_ID = "<uuid комнаты CRM>"
 $env:STATION_API_KEY = "<ключ станции>"
 $env:ROOM_API_BASE = "http://127.0.0.1:8080/v1"

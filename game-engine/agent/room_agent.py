@@ -34,7 +34,33 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from pathlib import Path
 from typing import Any
+
+
+def load_dotenv_file(path: Path) -> None:
+    """Простой .env рядом с агентом (KEY=VALUE). Уже заданные в OS переменные не перезаписываем."""
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        print(f"WARN: cannot read {path}: {exc}")
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key:
+            continue
+        if os.environ.get(key):
+            continue
+        os.environ[key] = value
 
 
 def env(name: str, default: str | None = None) -> str:
@@ -408,6 +434,10 @@ def heartbeat_loop() -> None:
 
 
 def main() -> None:
+    agent_dir = Path(__file__).resolve().parent
+    load_dotenv_file(agent_dir / ".env")
+    load_dotenv_file(agent_dir / "room_agent.env")
+
     env("ROOM_ID")
     env("STATION_API_KEY")
     room_base = os.environ.get("ROOM_API_BASE", "http://127.0.0.1:8080/v1")
