@@ -224,7 +224,8 @@ model GameMode {
 
 model Transaction {
   id                String            @id @default(uuid())
-  userId            String
+  /** Null for guest walk-in cash sales (no player account). */
+  userId            String?
   type              TransactionType
   source            TransactionSource
   amountTenge       Int               @default(0)
@@ -234,7 +235,7 @@ model Transaction {
 
   createdAt DateTime @default(now())
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
   venue Venue? @relation(fields: [venueId], references: [id])
 
   @@index([userId])

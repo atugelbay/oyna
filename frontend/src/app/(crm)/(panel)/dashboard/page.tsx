@@ -19,6 +19,7 @@ import { Paper } from "@mui/material";
 import { createPortal } from "react-dom";
 import { Input, Button } from "@/components/ui";
 import { AddPlayerModal } from "@/components/crm/AddPlayerModal";
+import { GuestSaleModal } from "@/components/crm/GuestSaleModal";
 import { LaunchRoomModal } from "@/components/crm/LaunchRoomModal";
 import { PlayerProfileModal } from "@/components/crm/PlayerProfileModal";
 import { readApiUserError } from "@/lib/api-error-message";
@@ -147,6 +148,7 @@ export default function DashboardPage() {
   const [profilePlayerId, setProfilePlayerId] = useState<string | null>(null);
   const [profileInitialTopUpOpen, setProfileInitialTopUpOpen] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  const [guestSaleOpen, setGuestSaleOpen] = useState(false);
   const [createTeamOpen, setCreateTeamOpen] = useState(false);
   const [launchRoom, setLaunchRoom] = useState<{ id: string; name: string } | null>(null);
 
@@ -308,6 +310,7 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-2">
               <QuickActionCard title="Добавить нового игрока" onClick={() => setAddPlayerOpen(true)} />
               <QuickActionCard title="Пополнить минуты" onClick={() => setTopUpOpen(true)} />
+              <QuickActionCard title="Гостевая оплата" onClick={() => setGuestSaleOpen(true)} />
               <QuickActionCard title="Создать команду" onClick={() => setCreateTeamOpen(true)} />
             </div>
           </Paper>
@@ -334,6 +337,12 @@ export default function DashboardPage() {
           setTopUpOpen(false);
           openPlayerProfile(id, { withTopUp: true });
         }}
+      />
+      <GuestSaleModal
+        isOpen={guestSaleOpen}
+        onClose={() => setGuestSaleOpen(false)}
+        venueId={selectedVenueId}
+        onSuccess={refreshDashboard}
       />
       <QuickCreateTeamModal isOpen={createTeamOpen} onClose={() => setCreateTeamOpen(false)} />
       <LaunchRoomModal

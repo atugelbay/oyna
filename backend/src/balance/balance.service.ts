@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TopupDto } from './dto/topup.dto';
+import { GuestSaleDto } from './dto/guest-sale.dto';
 import { TransactionType, TransactionSource } from '@prisma/client';
 
 @Injectable()
@@ -24,6 +25,54 @@ export class BalanceService {
       userId,
       availableSeconds: balance.availableSeconds,
       availableMinutes: Math.floor(balance.availableSeconds / 60),
+    };
+  }
+
+  /**
+   * Гостевая оплата: выручка в transactions без User / без зачисления минут.
+   * Description format matched by stats.bucketForPurchase.
+   */
+  async guestSale(dto: GuestSaleDto) {
+    const venue = await this.prisma.venue.findUnique({
+      where: { id: dto.venueId },
+    });
+    if (!venue) {
+      throw new NotFoundException('Площадка не найдена');
+    }
+
+    if (dto.roomId) {
+      const room = await this.prisma.room.findFirst({
+        where: { id: dto.roomId, venueId: dto.venueId },
+      });
+      if (!room) {
+        throw new BadRequestException('Комната не принадлежит этой площадке');
+      }
+    }
+
+    const comment = (dto.comment?.trim() || 'Гость').slice(0, 200);
+    const packagePart = dto.packageName?.trim()
+      ? ` «${dto.packageName.trim().slice(0, 120)}»`
+      : '';
+    const description = `Гостевая оплата (guest, ${dto.paymentMethod})${packagePart} ${dto.minutes} мин. ${comment}`;
+
+    const transaction = await this.prisma.transaction.create({
+      data: {
+        userId: null,
+        type: TransactionType.PURCHASE,
+        source: TransactionSource.CASHIER,
+        amountTenge: dto.amountTenge,
+        equivalentSeconds: dto.minutes * 60,
+        venueId: dto.venueId,
+        description,
+      },
+    });
+
+    return {
+      transactionId: transaction.id,
+      amountTenge: transaction.amountTenge,
+      minutes: dto.minutes,
+      paymentMethod: dto.paymentMethod,
+      description: transaction.description,
     };
   }
 

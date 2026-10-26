@@ -404,7 +404,9 @@ export class GameSessionsService {
 
     // CRM «Стоп» с нулевыми очками → только Room API /session/stop;
     // реальные очки придут в session_finished → повторный end.
-    const allZero = dto.results.every((r) => r.score === 0);
+    // Пустой results (гость-only) — не сюда: сразу COMPLETED ниже.
+    const allZero =
+      dto.results.length > 0 && dto.results.every((r) => r.score === 0);
     if (
       allZero &&
       session.engineSessionId &&

@@ -377,13 +377,8 @@ export class StationService {
       ? new Date(String(event.payload.started_at))
       : new Date();
 
-    // QR-only: игроки сели по QR без CRM start → создаём сессию из события.
+    // QR / HUD: сессия без CRM start — в т.ч. только гости (пустой player_id).
     if (!session) {
-      if (playerIds.length === 0) {
-        throw new NotFoundException(
-          `No CRM session and no account players in session_started for room=${crmRoomId}`,
-        );
-      }
       const created = await this.createSessionFromRoomStart({
         crmRoomId,
         engineSessionId,
@@ -394,8 +389,11 @@ export class StationService {
         playerIds,
         startedAt,
       });
+      // Debit только у привязанных GameSessionPlayer (гости без userId — no-op).
       await this.gameSessions.debitBalanceOnSessionStart(created.id);
-      return `created_from_qr:${created.id}`;
+      return playerIds.length
+        ? `created_from_qr:${created.id}`
+        : `created_guest_only:${created.id}`;
     }
 
     await this.prisma.gameSession.update({
@@ -502,13 +500,19 @@ export class StationService {
         where: { id: session.id },
         include: { players: true },
       });
-      const userIds = (full?.players ?? []).map((p) => p.userId);
-      const u = await this.playerLobby.applyUnlocksNext({
-        userIds,
-        engineModeId,
-        clearedLevel: level,
-      });
-      unlockDetail = `;unlock=${u.unlockedLevel}:n=${u.updated}`;
+      const userIds = (full?.players ?? [])
+        .map((p) => p.userId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+      if (userIds.length > 0) {
+        const u = await this.playerLobby.applyUnlocksNext({
+          userIds,
+          engineModeId,
+          clearedLevel: level,
+        });
+        unlockDetail = `;unlock=${u.unlockedLevel}:n=${u.updated}`;
+      } else {
+        unlockDetail = ';unlock=skipped:no_players';
+      }
     }
 
     return `match:${session.id}:L${level}:A${attemptNumber}${unlockDetail}`;
@@ -549,23 +553,37 @@ export class StationService {
 
     const totalScore = Number(payload.total_score ?? 0);
 
-    // slot в Room API — 1-based по порядку входа; в CRM players создаются в том же порядке
-    const results = session.players.map((p, index) => {
-      const slot = index + 1;
-      const score = slotScores.has(slot)
-        ? (slotScores.get(slot) as number)
-        : totalScore;
-      return { userId: p.userId, score };
-    });
+    // Только реальные аккаунты CRM: гости (пустой player_id) не пишут Score / debit / unlocks.
+    const results = session.players
+      .filter((p) => typeof p.userId === 'string' && p.userId.length > 0)
+      .map((p, index) => {
+        const slot = index + 1;
+        const score = slotScores.has(slot)
+          ? (slotScores.get(slot) as number)
+          : totalScore;
+        return { userId: p.userId, score };
+      });
 
     if (results.length === 0) {
-      throw new BadRequestException('session_finished: CRM session has no players');
+      // Сессия только из гостей — завершаем без очков и списаний.
+      if (session.status !== SessionStatus.COMPLETED) {
+        await this.prisma.gameSession.update({
+          where: { id: session.id },
+          data: {
+            status: SessionStatus.COMPLETED,
+            endTime: new Date(),
+            deductedSeconds: session.balanceDebitedAt
+              ? session.deductedSeconds
+              : durationSeconds,
+          },
+        });
+      }
+    } else {
+      await this.gameSessions.endSession(session.id, {
+        durationSeconds,
+        results,
+      });
     }
-
-    await this.gameSessions.endSession(session.id, {
-      durationSeconds,
-      results,
-    });
 
     // После сеанса лобби снова пустое — обновить QR и таблицы рекордов на HUD.
     const qr = await this.lobbyQr.pushLobbyQr(crmRoomId, 'session_finished');

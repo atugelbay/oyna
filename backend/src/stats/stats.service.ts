@@ -70,7 +70,9 @@ function bucketForPurchase(
   source: string,
 ): PaymentBucket {
   if (description) {
-    const m = description.match(/Пополнение\s*\([^,]+,\s*(cash|card|kaspi_qr)\)/);
+    const m = description.match(
+      /(?:Пополнение|Гостевая оплата)\s*\([^,]+,\s*(cash|card|kaspi_qr)\)/,
+    );
     if (m?.[1] === 'cash') return 'cash';
     if (m?.[1] === 'card') return 'card';
     if (m?.[1] === 'kaspi_qr') return 'kaspi_qr';

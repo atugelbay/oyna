@@ -9,6 +9,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { BalanceService } from './balance.service';
 import { TopupDto } from './dto/topup.dto';
+import { GuestSaleDto } from './dto/guest-sale.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards';
 import { Roles, CurrentUser } from '../common/decorators';
@@ -34,6 +35,15 @@ export class BalanceController {
     @CurrentUser('id') operatorId: string,
   ) {
     return this.balanceService.topup(dto, operatorId);
+  }
+
+  @Post('guest-sale')
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Гостевая оплата (без аккаунта): выручка + минуты в учёте',
+  })
+  guestSale(@Body() dto: GuestSaleDto) {
+    return this.balanceService.guestSale(dto);
   }
 }
 
