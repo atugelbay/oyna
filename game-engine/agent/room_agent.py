@@ -355,10 +355,10 @@ def poll_commands() -> None:
                     print("Skip unknown command payload:", command.get("type"), payload)
                     ack_ids.append(command["id"])  # не блокируем очередь legacy
             except urllib.error.HTTPError as exc:
-                # 404 на /_dev/* в зальной сборке — ack, чтобы не крутить вечно
+                # 404 /_dev/* в зале; 422 схема не примется повторно — ack, иначе очередь клинит
                 body = exc.read().decode("utf-8", errors="replace")[:400]
                 print("Room command HTTP error:", exc.code, body)
-                if exc.code in (404, 409):
+                if exc.code in (400, 404, 409, 422):
                     ack_ids.append(command["id"])
             except Exception as exc:
                 print("Room command error:", exc)
