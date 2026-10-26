@@ -14,6 +14,15 @@ type HallRow = {
   played_at: string;
 };
 
+/** Room API v1: <room>.<snake_case>, только латиница (events/common.schema.json). */
+const MODE_ID_RE = /^[a-z]+\.[a-z0-9_]+$/;
+
+function toRoomApiTimestamp(d: Date): string {
+  // Требует ровно 3 цифры мс + Z: 2026-10-08T14:03:21.412Z
+  const iso = d.toISOString();
+  return iso.replace(/(\.\d{3})\d*Z$/, '$1Z');
+}
+
 @Injectable()
 export class HallRecordsService {
   private readonly logger = new Logger(HallRecordsService.name);
@@ -56,29 +65,39 @@ export class HallRecordsService {
     since: Date | null,
     take = 10,
   ): Promise<HallRow[]> {
+    // Берём с запасом: часть строк отфильтруем из‑за невалидного mode_id.
     const rows = await this.prisma.score.findMany({
       where: {
         roomId,
         ...(since ? { createdAt: { gte: since } } : {}),
       },
       orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
-      take,
+      take: take * 3,
       include: {
         user: { select: { nickname: true, name: true } },
         mode: { select: { config: true, name: true } },
       },
     });
 
-    return rows.map((s) => {
-      const modeId =
-        engineModeIdFromGameMode(s.mode) ??
-        s.mode.name.replace(/\s+/g, '_').toLowerCase();
-      return {
-        nick: (s.user.nickname ?? s.user.name ?? 'Player').slice(0, 32),
-        score: s.score,
+    const out: HallRow[] = [];
+    for (const s of rows) {
+      const modeId = engineModeIdFromGameMode(s.mode);
+      if (!modeId || !MODE_ID_RE.test(modeId)) {
+        this.logger.debug(
+          `hall_records skip score=${s.id}: mode_id invalid (${modeId ?? s.mode.name})`,
+        );
+        continue;
+      }
+      const nick = (s.user.nickname ?? s.user.name ?? 'Player').trim().slice(0, 32);
+      if (!nick) continue;
+      out.push({
+        nick,
+        score: Math.max(0, Math.trunc(s.score)),
         mode_id: modeId,
-        played_at: s.createdAt.toISOString(),
-      };
-    });
+        played_at: toRoomApiTimestamp(s.createdAt),
+      });
+      if (out.length >= take) break;
+    }
+    return out;
   }
 }
