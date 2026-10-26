@@ -13,15 +13,27 @@ export type EmployeeModalState =
   | { kind: "add" }
   | { kind: "edit"; employee: { id: string; name: string; phone: string; role: string } };
 
-type EmployeeRole = "OPERATOR" | "MANAGER";
+type EmployeeRole = "OPERATOR" | "MANAGER" | "ADMIN";
 
 const ROLE_OPTIONS: { value: EmployeeRole; label: string }[] = [
   { value: "OPERATOR", label: "Оператор" },
   { value: "MANAGER", label: "Менеджер" },
+  { value: "ADMIN", label: "Администратор" },
 ];
 
 function normalizeRole(r: string): EmployeeRole {
-  return r?.toUpperCase() === "MANAGER" ? "MANAGER" : "OPERATOR";
+  const u = r?.toUpperCase();
+  if (u === "ADMIN") return "ADMIN";
+  if (u === "MANAGER") return "MANAGER";
+  return "OPERATOR";
+}
+
+function roleLabel(role: string) {
+  const u = role?.toUpperCase();
+  if (u === "ADMIN") return "Администратор";
+  if (u === "MANAGER") return "Менеджер";
+  if (u === "OPERATOR") return "Оператор";
+  return role;
 }
 
 interface EmployeeModalProps {
@@ -37,6 +49,8 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState<EmployeeRole>("OPERATOR");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [venueId, setVenueId] = useState<string | null>(null);
   const [loadingVenue, setLoadingVenue] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -53,6 +67,8 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
     if (state.kind === "closed") return;
     setError(null);
     setSubmitting(false);
+    setPassword("");
+    setPasswordConfirm("");
 
     if (state.kind === "add") {
       setName("");
@@ -97,6 +113,8 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
   }, [state.kind, contextVenueId]);
 
   const editPhone = state.kind === "edit" ? state.employee.phone : "";
+  const needsPasswordOnCreate = role === "ADMIN";
+  const showPasswordFields = role === "ADMIN";
 
   function handleSubmit(ev: FormEvent) {
     ev.preventDefault();
@@ -123,6 +141,19 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
         return;
       }
 
+      let passwordPayload: string | undefined;
+      if (needsPasswordOnCreate) {
+        if (password.length < 8) {
+          setError("Пароль администратора — не короче 8 символов");
+          return;
+        }
+        if (password !== passwordConfirm) {
+          setError("Пароли не совпадают");
+          return;
+        }
+        passwordPayload = password;
+      }
+
       setSubmitting(true);
       settingsService
         .createEmployee({
@@ -130,6 +161,7 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
           name: trimmedName,
           role,
           venueId,
+          ...(passwordPayload ? { password: passwordPayload } : {}),
         })
         .then(() => {
           onSaved?.();
@@ -143,9 +175,32 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
     }
 
     if (mode === "edit" && state.kind === "edit") {
+      const wasAdmin = normalizeRole(state.employee.role) === "ADMIN";
+      const becomingAdmin = role === "ADMIN" && !wasAdmin;
+      let passwordPayload: string | undefined;
+
+      if (role === "ADMIN" && password) {
+        if (password.length < 8) {
+          setError("Пароль — не короче 8 символов");
+          return;
+        }
+        if (password !== passwordConfirm) {
+          setError("Пароли не совпадают");
+          return;
+        }
+        passwordPayload = password;
+      } else if (becomingAdmin) {
+        setError("При назначении администратора задайте пароль (не короче 8 символов)");
+        return;
+      }
+
       setSubmitting(true);
       settingsService
-        .updateEmployee(state.employee.id, { name: trimmedName, role })
+        .updateEmployee(state.employee.id, {
+          name: trimmedName,
+          role,
+          ...(passwordPayload ? { password: passwordPayload } : {}),
+        })
         .then(() => {
           onSaved?.();
           onClose();
@@ -233,6 +288,29 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
                 </select>
               </div>
 
+              {showPasswordFields ? (
+                <div className="space-y-3 rounded-xl border border-surface-border/60 bg-[#1F2B38]/50 p-3">
+                  <p className="text-xs text-text-muted">
+                    Администратор входит во вкладке «Владелец» по телефону и паролю
+                    {mode === "edit" ? " (оставьте пустым, чтобы не менять пароль)" : ""}.
+                  </p>
+                  <Input
+                    label={mode === "add" ? "Пароль" : "Новый пароль"}
+                    isPassword
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <Input
+                    label="Повтор пароля"
+                    isPassword
+                    value={passwordConfirm}
+                    onChange={(e) => setPasswordConfirm(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+              ) : null}
+
               {error ? <p className="text-danger text-sm">{error}</p> : null}
 
               <Button type="submit" disabled={submitting} className="mt-2 inline-flex w-full items-center justify-center gap-2">
@@ -247,6 +325,8 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
     document.body,
   );
 }
+
+export { roleLabel };
 
 function BackIcon() {
   return (

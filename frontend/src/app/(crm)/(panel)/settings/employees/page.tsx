@@ -6,7 +6,7 @@ import { settingsService } from "@/services/settings.service";
 import { useAuth } from "@/lib/auth-context";
 import { useCrmVenue } from "@/lib/venue-context";
 import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
-import { EmployeeModal, type EmployeeModalState } from "@/components/crm/EmployeeModal";
+import { EmployeeModal, roleLabel, type EmployeeModalState } from "@/components/crm/EmployeeModal";
 
 type Employee = { id: string; name: string; phone: string; role: string };
 
@@ -99,7 +99,7 @@ export default function SettingsEmployeesPage() {
               <tr key={e.id} className="border-b border-surface-border/50 last:border-0 hover:bg-bg-card/30">
                 <td className="py-3 px-4 text-text-primary">{e.name}</td>
                 <td className="py-3 px-4 text-text-primary">{e.phone}</td>
-                <td className="py-3 px-4 text-text-primary">{e.role}</td>
+                <td className="py-3 px-4 text-text-primary">{roleLabel(e.role)}</td>
                 <td className="py-3 px-4 text-right">
                   {isAdmin ? (
                     <div className="flex justify-end gap-2 whitespace-nowrap">

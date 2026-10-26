@@ -1,5 +1,12 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsUUID, IsEnum } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsString,
+  IsNotEmpty,
+  IsUUID,
+  IsEnum,
+  IsOptional,
+  MinLength,
+} from 'class-validator';
 import { Role } from '@prisma/client';
 
 export class CreateEmployeeDto {
@@ -20,6 +27,15 @@ export class CreateEmployeeDto {
   @ApiProperty({ example: 'uuid-of-venue' })
   @IsUUID('loose')
   venueId: string;
+
+  @ApiPropertyOptional({
+    example: 'StrongPass123',
+    description: 'Обязателен для роли ADMIN (вход во вкладке «Владелец»)',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  password?: string;
 }
 
 

@@ -130,6 +130,7 @@ export const settingsService = {
     name: string;
     role: string;
     venueId: string;
+    password?: string;
   }) {
     const { data } = await api.post("/settings/employees", payload);
     return data;
@@ -137,7 +138,7 @@ export const settingsService = {
 
   async updateEmployee(
     id: string,
-    payload: { name?: string; role?: string },
+    payload: { name?: string; role?: string; password?: string },
   ) {
     const { data } = await api.patch(`/settings/employees/${id}`, payload);
     return data;

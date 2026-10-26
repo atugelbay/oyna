@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -48,6 +49,11 @@ const EMPLOYEE_ASSIGNABLE_ROLES: Role[] = [
   Role.MANAGER,
   ...CRM_EXTRA_ROLE_SLOTS,
 ];
+
+/** Сотрудники CRM в списке настроек (включая админов). */
+const STAFF_LIST_ROLES: Role[] = [Role.ADMIN, ...EMPLOYEE_ASSIGNABLE_ROLES];
+
+const STAFF_CREATABLE_ROLES: Role[] = [Role.ADMIN, ...EMPLOYEE_ASSIGNABLE_ROLES];
 
 @Injectable()
 export class SettingsService {
@@ -342,7 +348,7 @@ export class SettingsService {
       isActive: boolean;
       staffVenues?: { some: { venueId: string } };
     } = {
-      role: { in: EMPLOYEE_ASSIGNABLE_ROLES },
+      role: { in: STAFF_LIST_ROLES },
       isActive: true,
     };
     if (venueId) {
@@ -359,7 +365,7 @@ export class SettingsService {
   }
 
   async createEmployee(dto: CreateEmployeeDto) {
-    if (!EMPLOYEE_ASSIGNABLE_ROLES.includes(dto.role)) {
+    if (!STAFF_CREATABLE_ROLES.includes(dto.role)) {
       throw new BadRequestException('Недопустимая роль сотрудника');
     }
 
@@ -375,8 +381,22 @@ export class SettingsService {
       throw new ConflictException('User with this phone already exists');
     }
 
+    let passwordHash: string | null = null;
+    if (dto.role === Role.ADMIN) {
+      const password = dto.password?.trim() ?? '';
+      if (password.length < 8) {
+        throw new BadRequestException(
+          'Для администратора нужен пароль не короче 8 символов',
+        );
+      }
+      passwordHash = await bcrypt.hash(password, 10);
+    } else if (dto.password) {
+      throw new BadRequestException(
+        'Пароль задаётся только для роли администратора',
+      );
+    }
+
     const nickname = await this.generateUniqueNickname(phoneNorm);
-    const passwordHash = null;
 
     const user = await this.prisma.user.create({
       data: {
@@ -401,20 +421,44 @@ export class SettingsService {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
-        role: { in: EMPLOYEE_ASSIGNABLE_ROLES },
+        role: { in: STAFF_LIST_ROLES },
       },
     });
     if (!user) {
       throw new NotFoundException('Employee not found');
     }
 
-    const updateData: { name?: string; role?: Role } = {};
+    const updateData: {
+      name?: string;
+      role?: Role;
+      passwordHash?: string;
+    } = {};
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.role !== undefined) {
-      if (!EMPLOYEE_ASSIGNABLE_ROLES.includes(dto.role)) {
+      if (!STAFF_CREATABLE_ROLES.includes(dto.role)) {
         throw new BadRequestException('Недопустимая роль сотрудника');
       }
       updateData.role = dto.role;
+    }
+
+    const nextRole = dto.role ?? user.role;
+    if (dto.password !== undefined) {
+      const password = dto.password.trim();
+      if (password.length < 8) {
+        throw new BadRequestException('Пароль должен быть не короче 8 символов');
+      }
+      if (nextRole !== Role.ADMIN) {
+        throw new BadRequestException(
+          'Пароль можно задать только администратору',
+        );
+      }
+      updateData.passwordHash = await bcrypt.hash(password, 10);
+    }
+
+    if (nextRole === Role.ADMIN && user.role !== Role.ADMIN && !dto.password) {
+      throw new BadRequestException(
+        'При назначении администратора укажите пароль (не короче 8 символов)',
+      );
     }
 
     return this.prisma.user.update({
@@ -430,7 +474,7 @@ export class SettingsService {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
-        role: { in: EMPLOYEE_ASSIGNABLE_ROLES },
+        role: { in: STAFF_LIST_ROLES },
       },
     });
     if (!user) {
