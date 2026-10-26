@@ -699,11 +699,11 @@ function RoomStatusRow({
     ? room.sessionPlayerUserIds
     : [];
 
-  /** Завершить активную сессию: списание за фактическое время (как «Завершить» по таймеру, так и «Стоп» вручную). */
+  /** Завершить активную сессию: списание за фактическое время (как «Завершить» по таймеру, так и «Стоп» вручную).
+   * Гости без userId: пустой results → backend шлёт Room API /session/stop. */
   const handleFinalizeSession = async () => {
     if (!sessionId || busy) return;
     if (!canCountdown || room.levelDurationSeconds == null || remainingSeconds == null) return;
-    if (playerUserIdsForEnd.length < 1) return;
 
     const usedSeconds = Math.min(
       room.levelDurationSeconds,
@@ -783,7 +783,6 @@ function RoomStatusRow({
     busy ||
     !sessionId ||
     (hydratingSession && !canCountdown) ||
-    playerUserIdsForEnd.length < 1 ||
     !canCountdown ||
     remainingSeconds === null;
 
@@ -852,7 +851,12 @@ function RoomStatusRow({
         {isOccupied && (
           <>
             <span className="text-sm text-text-secondary min-w-0 sm:max-w-[min(100%,22rem)]">
-              Игроки: <span className="text-white">{formatWaitingPlayersLine(inGameNames)}</span>
+              Игроки:{" "}
+              <span className="text-white">
+                {inGameNames.length
+                  ? formatWaitingPlayersLine(inGameNames)
+                  : "Гости"}
+              </span>
             </span>
             <div className="flex flex-wrap items-center justify-end gap-2">
               {!occupiedShowComplete ? (
@@ -872,15 +876,9 @@ function RoomStatusRow({
                 disabled={
                   busy ||
                   !sessionId ||
-                  (hydratingSession && !canCountdown) ||
-                  (occupiedShowComplete && playerUserIdsForEnd.length < 1)
+                  (hydratingSession && !canCountdown)
                 }
                 onClick={() => void handlePrimarySessionAction()}
-                title={
-                  occupiedShowComplete && playerUserIdsForEnd.length < 1
-                    ? "Нет списка игроков для завершения — обновите страницу"
-                    : undefined
-                }
                 className={`inline-flex min-h-[2.25rem] min-w-[7rem] items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-opacity disabled:cursor-not-allowed disabled:opacity-50 ${
                   occupiedShowComplete
                     ? "bg-amber-500 text-black hover:opacity-90"

@@ -402,13 +402,13 @@ export class GameSessionsService {
       }
     }
 
-    // CRM «Стоп» с нулевыми очками → только Room API /session/stop;
-    // реальные очки придут в session_finished → повторный end.
-    // Пустой results (гость-only) — не сюда: сразу COMPLETED ниже.
-    const allZero =
-      dto.results.length > 0 && dto.results.every((r) => r.score === 0);
+    // CRM «Стоп»: нулевые очки или пустой results (только гости) →
+    // Room API /session/stop; финал придёт в session_finished.
+    const operatorStopIntent =
+      dto.results.length === 0 ||
+      dto.results.every((r) => r.score === 0);
     if (
-      allZero &&
+      operatorStopIntent &&
       session.engineSessionId &&
       session.status === SessionStatus.ACTIVE
     ) {
