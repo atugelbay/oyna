@@ -377,22 +377,6 @@ export class GameSessionsService {
 
     if (!session) throw new NotFoundException('Сессия не найдена');
 
-    if (session.status === SessionStatus.COMPLETED) {
-      const scores = await this.prisma.score.findMany({
-        where: { sessionId: session.id },
-        select: { userId: true, score: true },
-      });
-      return {
-        sessionId: session.id,
-        status: SessionStatus.COMPLETED,
-        deductedSeconds: session.deductedSeconds,
-        scores: scores.map((s) => ({
-          userId: s.userId,
-          score: s.score,
-        })),
-      };
-    }
-
     const allowedUserIds = new Set(session.players.map((p) => p.userId));
     for (const r of dto.results) {
       if (!allowedUserIds.has(r.userId)) {
@@ -402,11 +386,63 @@ export class GameSessionsService {
       }
     }
 
-    // CRM «Стоп»: нулевые очки или пустой results (только гости) →
-    // Room API /session/stop; финал придёт в session_finished.
+    // CRM «Стоп»/«Завершить» шлёт нули (или пустой results у гостей).
+    // Раньше ждали только session_finished → при Room API уже idle (409)
+    // комната в CRM зависала. Теперь сразу COMPLETED + best-effort stop;
+    // реальные очки допишет session_finished, если придёт позже.
     const operatorStopIntent =
       dto.results.length === 0 ||
       dto.results.every((r) => r.score === 0);
+
+    if (session.status === SessionStatus.COMPLETED) {
+      const existing = await this.prisma.score.findMany({
+        where: { sessionId: session.id },
+        select: { userId: true, score: true },
+      });
+      // Поздние очки с моноблока после операторского finalize без Score.
+      if (
+        existing.length === 0 &&
+        dto.results.length > 0 &&
+        !operatorStopIntent
+      ) {
+        await this.prisma.$transaction(async (tx) => {
+          for (const playerResult of dto.results) {
+            await tx.score.create({
+              data: {
+                userId: playerResult.userId,
+                sessionId: session.id,
+                roomId: session.roomId,
+                modeId: session.modeId,
+                score: playerResult.score,
+              },
+            });
+            if (playerResult.score > 0) {
+              await tx.user.update({
+                where: { id: playerResult.userId },
+                data: { totalScore: { increment: playerResult.score } },
+              });
+            }
+          }
+        });
+        return {
+          sessionId: session.id,
+          status: SessionStatus.COMPLETED,
+          deductedSeconds: session.deductedSeconds,
+          scores: dto.results,
+          lateScoresApplied: true,
+        };
+      }
+      return {
+        sessionId: session.id,
+        status: SessionStatus.COMPLETED,
+        deductedSeconds: session.deductedSeconds,
+        scores: existing.map((s) => ({
+          userId: s.userId,
+          score: s.score,
+        })),
+      };
+    }
+
     if (
       operatorStopIntent &&
       session.engineSessionId &&
@@ -421,18 +457,14 @@ export class GameSessionsService {
         }),
         session.id,
       );
-      return {
-        sessionId: session.id,
-        status: session.status,
-        deductedSeconds: session.deductedSeconds,
-        scores: dto.results,
-        pendingEngineStop: true,
-      };
+      // Не return: ниже сразу COMPLETED. 409 no_session на агенте — ок.
     }
 
     const pk = session.id;
 
     const alreadyDebited = Boolean(session.balanceDebitedAt);
+    /** Нули от кассы — плейсхолдер; Score пишем только с реальными очками. */
+    const skipPlaceholderScores = operatorStopIntent;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updatedSession = await tx.gameSession.update({
@@ -446,22 +478,24 @@ export class GameSessionsService {
       });
 
       const scores: Array<{ userId: string; score: number }> = [];
-      for (const playerResult of dto.results) {
-        const score = await tx.score.create({
-          data: {
-            userId: playerResult.userId,
-            sessionId: pk,
-            roomId: session.roomId,
-            modeId: session.modeId,
-            score: playerResult.score,
-          },
-        });
-        scores.push({ userId: score.userId, score: score.score });
+      if (!skipPlaceholderScores) {
+        for (const playerResult of dto.results) {
+          const score = await tx.score.create({
+            data: {
+              userId: playerResult.userId,
+              sessionId: pk,
+              roomId: session.roomId,
+              modeId: session.modeId,
+              score: playerResult.score,
+            },
+          });
+          scores.push({ userId: score.userId, score: score.score });
 
-        await tx.user.update({
-          where: { id: playerResult.userId },
-          data: { totalScore: { increment: playerResult.score } },
-        });
+          await tx.user.update({
+            where: { id: playerResult.userId },
+            data: { totalScore: { increment: playerResult.score } },
+          });
+        }
       }
 
       // Повторно не списываем: канон — 10 мин на session_started.
