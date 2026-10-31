@@ -41,10 +41,11 @@ export function CrmShellLayout({ children }: { children: ReactNode }) {
         <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-white/10 bg-[#0a0f14] md:hidden">
           {[
             ["/dashboard", "Главная"],
-            ["/cash", "Касса"],
             ["/live", "Зал"],
+            ["/cash", "Касса"],
             ["/players", "Игроки"],
-            ["/stats", "Ещё"],
+            ["/tournaments", "События"],
+            ["/schedule", "Команда"],
           ].map(([href, label]) => (
             <a key={href} href={href} className="flex min-h-14 flex-1 items-center justify-center px-1 text-center text-[11px] text-white">
               {label}

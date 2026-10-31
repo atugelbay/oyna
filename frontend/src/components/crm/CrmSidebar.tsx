@@ -6,23 +6,37 @@ import { usePathname } from "next/navigation";
 import { useCrmSidebarLayout } from "@/lib/crm-sidebar-layout-context";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Главная", icon: "/icons/navbar/home.png" },
-  { href: "/players", label: "Игроки", icon: "/icons/navbar/players.png" },
-  { href: "/rooms", label: "Игровые комнаты", icon: "/icons/navbar/rooms.png" },
-  { href: "/live", label: "Сейчас в зале", icon: "/icons/navbar/rooms.png" },
-  { href: "/cash", label: "Касса", icon: "/icons/navbar/stats.png" },
-  { href: "/payments", label: "Оплаты", icon: "/icons/navbar/stats.png" },
-  { href: "/bookings", label: "Брони", icon: "/icons/navbar/tournaments.png" },
-  { href: "/results", label: "Результаты игроков", icon: "/icons/navbar/results.png" },
-  { href: "/tournaments", label: "Турниры", icon: "/icons/navbar/tournaments.png" },
-  { href: "/promos", label: "Акции", icon: "/icons/navbar/stats.png" },
-  { href: "/stats", label: "Статистика", icon: "/icons/navbar/promos.png" },
-  { href: "/finance", label: "Финансы", icon: "/icons/navbar/promos.png" },
-  { href: "/operators", label: "Операторы", icon: "/icons/navbar/stats.png" },
-  { href: "/certificates", label: "Сертификаты", icon: "/icons/navbar/promos.png" },
-  { href: "/schedule", label: "График", icon: "/icons/navbar/players.png" },
-  { href: "/sources", label: "Источники", icon: "/icons/navbar/stats.png" },
+  { href: "/dashboard", label: "Главная", icon: "/icons/navbar/home.png", match: ["/dashboard"] },
+  { href: "/players", label: "Игроки", icon: "/icons/navbar/players.png", match: ["/players"] },
+  {
+    href: "/live",
+    label: "Зал",
+    icon: "/icons/navbar/rooms.png",
+    match: ["/live", "/rooms", "/sessions-log", "/bookings"],
+  },
+  {
+    href: "/cash",
+    label: "Касса",
+    icon: "/icons/navbar/stats.png",
+    match: ["/cash", "/payments", "/finance", "/stats", "/certificates"],
+  },
+  {
+    href: "/tournaments",
+    label: "События",
+    icon: "/icons/navbar/tournaments.png",
+    match: ["/tournaments", "/promos", "/results"],
+  },
+  {
+    href: "/schedule",
+    label: "Команда",
+    icon: "/icons/navbar/players.png",
+    match: ["/schedule", "/operators", "/sources"],
+  },
 ];
+
+function isNavActive(pathname: string, match: string[]) {
+  return match.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
 
 /** Навигация на том же градиентном фоне, что и шапка (без отдельной «плашки») */
 export function CrmSidebar() {
@@ -37,8 +51,8 @@ export function CrmSidebar() {
         id="crm-sidebar-nav"
         className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${collapsed ? "items-center gap-1 px-1" : "gap-2 px-2"}`}
       >
-        {NAV_ITEMS.map(({ href, label, icon }) => {
-          const isActive = pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
+        {NAV_ITEMS.map(({ href, label, icon, match }) => {
+          const isActive = isNavActive(pathname, match);
           const iconWrap = collapsed
             ? isActive
               ? "h-10 w-10 rounded-2xl bg-white/90"
