@@ -30,6 +30,7 @@ interface AuthContextValue {
     password: string,
     nickname: string,
     birthDate?: string,
+    extra?: { offerAccepted: boolean; privacyAccepted: boolean; guardianConfirmed: boolean; sourceCode?: string; referralCode?: string },
   ) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -79,12 +80,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     password: string,
     nickname: string,
     birthDate?: string,
+    extra?: { offerAccepted: boolean; privacyAccepted: boolean; guardianConfirmed: boolean; sourceCode?: string; referralCode?: string },
   ) => {
     const { data } = await api.post("/auth/register", {
       phone,
       password,
       nickname,
       birthDate,
+      offerAccepted: extra?.offerAccepted === true,
+      privacyAccepted: extra?.privacyAccepted === true,
+      guardianConfirmed: extra?.guardianConfirmed === true,
+      sourceCode: extra?.sourceCode,
+      referralCode: extra?.referralCode,
     });
     localStorage.setItem("accessToken", data.accessToken);
     localStorage.setItem("refreshToken", data.refreshToken);

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -136,10 +137,20 @@ export class UsersService {
     };
   }
 
-  async update(id: string, dto: UpdateUserDto) {
+  async update(id: string, dto: UpdateUserDto, actor?: { id: string; role: Role }) {
     const existing = await this.prisma.user.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException('Пользователь не найден');
+    }
+    const actorRole = actor?.role;
+    if ((dto.role !== undefined || dto.isActive !== undefined) && actorRole !== Role.ADMIN) {
+      throw new ForbiddenException('Менять роль и доступ может только владелец');
+    }
+    if (existing.role !== Role.USER && actorRole !== Role.ADMIN) {
+      throw new ForbiddenException('Сотрудник не редактирует профиль сотрудника');
+    }
+    if (dto.birthDate && existing.birthDate && actorRole !== Role.ADMIN) {
+      throw new ForbiddenException('Дату рождения после регистрации меняет только владелец');
     }
     if (dto.isActive === false && existing.role !== Role.USER) {
       throw new BadRequestException(

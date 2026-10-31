@@ -13,15 +13,29 @@ export class LeaderboardController {
   constructor(private leaderboardService: LeaderboardService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get global leaderboard' })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  getLeaderboard(@Query('limit') limit?: string) {
-    return this.leaderboardService.getLeaderboard(limit ? parseInt(limit, 10) : 50);
-  }
-
-  @Get('my-rank')
-  @ApiOperation({ summary: 'Get current player rank' })
-  getMyRank(@CurrentUser() user: CurrentUserPayload) {
-    return this.leaderboardService.getMyRank(user.id);
+  @ApiOperation({ summary: 'Рейтинг дня, месяца, года и за всё время' })
+  @ApiQuery({ name: 'period', required: false })
+  @ApiQuery({ name: 'room', required: false })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  getLeaderboard(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query('period') period?: string,
+    @Query('room') room?: string,
+    @Query('date') date?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.leaderboardService.getLeaderboard({
+      period,
+      room,
+      date,
+      month,
+      year,
+      limit: limit ? parseInt(limit, 10) : 50,
+      userId: user.id,
+    });
   }
 }

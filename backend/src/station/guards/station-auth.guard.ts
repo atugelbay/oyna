@@ -27,6 +27,9 @@ export class StationAuthGuard implements CanActivate {
     if (!token) {
       throw new UnauthorizedException('Empty token');
     }
+    if (process.env.NODE_ENV === 'production' && token === 'dev') {
+      throw new UnauthorizedException('Invalid station credentials');
+    }
 
     const room = await this.prisma.room.findUnique({ where: { id: roomId } });
     if (!room) {

@@ -7,6 +7,7 @@ import {
   MaxLength,
   IsByteLength,
   IsDateString,
+  Equals,
 } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
@@ -49,4 +50,21 @@ export class RegisterDto {
   @IsOptional()
   @IsDateString({}, { message: "Укажите корректную дату рождения" })
   birthDate?: string;
+
+  @Equals(true, { message: "Нужно согласие с офертой" })
+  offerAccepted!: boolean;
+
+  @Equals(true, { message: "Нужно согласие на обработку данных" })
+  privacyAccepted!: boolean;
+
+  @Equals(true, { message: "Подтвердите, что регистрируете себя 18+ или ребёнка как родитель" })
+  guardianConfirmed!: boolean;
+
+  @IsOptional()
+  @IsString()
+  sourceCode?: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 }

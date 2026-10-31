@@ -23,6 +23,7 @@ enum LoyaltyStatus {
   SILVER
   GOLD
   PLATINUM
+  LEGEND
 }
 
 enum VenueStatus {
@@ -83,6 +84,24 @@ model User {
   totalScore    Int           @default(0)
   isActive      Boolean       @default(true)
   passwordHash  String?
+  referralCode  String?       @unique
+  referredById  String?
+  birthDateLocked Boolean     @default(false)
+  offerAcceptedAt DateTime?
+  offerVersion  String?
+  privacyAcceptedAt DateTime?
+  privacyVersion String?
+  guardianConfirmedAt DateTime?
+  sourceCode    String?
+  instagram     String?
+  legendInvite  Boolean       @default(false)
+  deletedAt     DateTime?
+  mergedIntoId  String?
+  phoneHash     String?
+  blockedUntil  DateTime?
+  blockStartedAt DateTime?
+  blockPermanent Boolean      @default(false)
+  blockReason   String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -94,9 +113,13 @@ model User {
   tournamentMembers  TournamentMember[]
   tournamentResults  TournamentResult[]
   staffVenues        StaffVenue[]
+  minuteGrants       MinuteGrant[]
+  minuteEntries      MinuteEntry[]
 
   @@index([phone])
   @@index([nickname])
+  @@index([phoneHash])
+  @@index([referralCode])
   @@map("users")
 }
 
@@ -269,6 +292,15 @@ model GameSession {
   deductedSeconds Int           @default(0)
   /** Когда списали 10 мин на старте (идемпотентность) */
   balanceDebitedAt DateTime?
+  /** Секунды оплаченных и бонусных, списанные на старте */
+  paidSecondsDebited  Int @default(0)
+  bonusSecondsDebited Int @default(0)
+  /** false — турнир, тест, ручные минуты администратора */
+  countsForRating Boolean @default(true)
+  isTournament    Boolean @default(false)
+  endReason       String?
+  compensatedAt   DateTime?
+  launchedById    String?
   status          SessionStatus @default(PENDING)
 
   createdAt DateTime @default(now())
@@ -518,4 +550,483 @@ model VenueAccessCode {
 
   @@unique([venueId, role])
   @@map("venue_access_codes")
+}
+
+// ─── TZ 29.10: ledger, cash, loyalty, bookings ───────────
+
+enum MinuteKind {
+  PAID
+  BONUS
+  REWARD
+  COMPENSATION
+  MANUAL
+  LEGACY_UNKNOWN
+}
+
+enum MinuteEntryType {
+  CREDIT
+  DEBIT
+  EXPIRE
+  CANCEL
+}
+
+enum PayMethod {
+  CASH
+  KASPI
+  HALYK
+  FREEDOM
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum SaleStatus {
+  COMPLETED
+  CANCELLED
+}
+
+enum CatalogCategory {
+  GAMES
+  PACKAGES
+  PROMO
+  WATER
+  OTHER
+  CERTIFICATE
+}
+
+enum CashMoveType {
+  IN
+  OUT
+  EXPENSE
+}
+
+enum ExpensePay {
+  CASH_REGISTER
+  BANK
+  OWNER_CARD
+}
+
+enum BookingType {
+  BIRTHDAY
+  TEAMBUILDING
+}
+
+enum BookingStatus {
+  NEW
+  CONFIRMED
+  ARRIVED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ParticipantRole {
+  BIRTHDAY_PERSON
+  ORGANIZER
+  PLAYER
+}
+
+enum CertificateStatus {
+  SOLD
+  ACTIVATED
+  EXPIRED
+}
+
+enum PhoneChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+model MinuteGrant {
+  id                String     @id @default(uuid())
+  userId            String
+  kind              MinuteKind
+  seconds           Int
+  remainingSeconds  Int
+  expiresAt         DateTime?
+  source            String
+  idempotencyKey    String?    @unique
+  loyaltyStatus     LoyaltyStatus?
+  transactionId     String?
+  sessionId         String?
+  createdById       String?
+  reason            String?
+  createdAt         DateTime   @default(now())
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries MinuteEntry[]
+
+  @@index([userId, expiresAt])
+  @@index([userId, remainingSeconds])
+  @@map("minute_grants")
+}
+
+model MinuteEntry {
+  id          String          @id @default(uuid())
+  userId      String
+  grantId     String?
+  type        MinuteEntryType
+  seconds     Int
+  reason      String
+  sessionId   String?
+  createdById String?
+  createdAt   DateTime        @default(now())
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grant MinuteGrant? @relation(fields: [grantId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([sessionId])
+  @@map("minute_entries")
+}
+
+model AuthRateLimit {
+  key         String    @id
+  failCount   Int       @default(0)
+  windowStart DateTime  @default(now())
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@map("auth_rate_limits")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@map("audit_logs")
+}
+
+model CatalogItem {
+  id           String          @id @default(uuid())
+  venueId      String?
+  name         String
+  category     CatalogCategory
+  priceTenge   Int
+  minutes      Int?
+  active       Boolean         @default(true)
+  trackStock   Boolean         @default(false)
+  stockQty     Int             @default(0)
+  lowStockAt   Int             @default(10)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([venueId, active])
+  @@map("catalog_items")
+}
+
+model CashShift {
+  id                  String      @id @default(uuid())
+  venueId             String
+  number              Int
+  openedById          String
+  closedById          String?
+  status              ShiftStatus @default(OPEN)
+  openingCash         Int
+  previousCloseCash   Int?
+  openingNote         String?
+  closingCashActual   Int?
+  closingKaspi        Int?
+  closingHalyk        Int?
+  closingFreedom      Int?
+  closeComment        String?
+  openedAt            DateTime    @default(now())
+  closedAt            DateTime?
+
+  sales     Sale[]
+  movements CashMovement[]
+
+  @@index([venueId, status])
+  @@index([openedById])
+  @@map("cash_shifts")
+}
+
+model Sale {
+  id                String     @id @default(uuid())
+  number            Int
+  venueId           String
+  shiftId           String?
+  operatorId        String
+  userId            String?
+  totalTenge        Int
+  minutesCredited   Int        @default(0)
+  bonusMinutes      Int        @default(0)
+  status            SaleStatus @default(COMPLETED)
+  receiptChecked    Boolean    @default(false)
+  receiptNumber     String?
+  comment           String?
+  enteredAfterOutage Boolean   @default(false)
+  cancelReason      String?
+  cancelledById     String?
+  cancelledAt       DateTime?
+  transactionId     String?
+  createdAt         DateTime   @default(now())
+
+  shift    CashShift?    @relation(fields: [shiftId], references: [id])
+  lines    SaleLine[]
+  payments SalePayment[]
+
+  @@index([venueId, createdAt])
+  @@index([operatorId, createdAt])
+  @@index([userId])
+  @@index([shiftId])
+  @@map("sales")
+}
+
+model SaleLine {
+  id         String @id @default(uuid())
+  saleId     String
+  itemId     String?
+  name       String
+  qty        Int
+  priceTenge Int
+  minutes    Int    @default(0)
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("sale_lines")
+}
+
+model SalePayment {
+  id           String    @id @default(uuid())
+  saleId       String
+  method       PayMethod
+  amountTenge  Int
+  cashReceived Int?
+  changeTenge  Int?
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("sale_payments")
+}
+
+model CashMovement {
+  id         String       @id @default(uuid())
+  shiftId    String
+  type       CashMoveType
+  amount     Int
+  article    String?
+  comment    String?
+  operatorId String
+  expenseId  String?
+  createdAt  DateTime     @default(now())
+
+  shift CashShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([shiftId])
+  @@map("cash_movements")
+}
+
+model Expense {
+  id          String     @id @default(uuid())
+  venueId     String
+  occurredOn  DateTime
+  amountTenge Int
+  category    String
+  article     String
+  comment     String?
+  payMethod   ExpensePay
+  shiftId     String?
+  createdById String
+  cancelledAt DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([venueId, occurredOn])
+  @@map("expenses")
+}
+
+model MonthlyPlan {
+  id            String @id @default(uuid())
+  venueId       String
+  year          Int
+  month         Int
+  planTenge     Int
+  overplanTenge Int
+  rateBelow     Int
+  rateAt        Int
+  rateOver      Int
+  bookingRate   Int    @default(10)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([venueId, year, month])
+  @@map("monthly_plans")
+}
+
+model StaffSchedule {
+  id         String   @id @default(uuid())
+  venueId    String
+  userId     String
+  startsAt   DateTime
+  endsAt     DateTime
+  arrivedAt  DateTime?
+  leftAt     DateTime?
+  replacedBy String?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([venueId, startsAt])
+  @@index([userId, startsAt])
+  @@map("staff_schedules")
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  venueId       String
+  type          BookingType
+  startsAt      DateTime
+  contactName   String
+  contactPhone  String
+  packageName   String
+  packageMinutes Int
+  priceLocked   Int
+  people        Int
+  amountTenge   Int
+  prepayTenge   Int           @default(0)
+  broughtById   String
+  sourceCode    String
+  status        BookingStatus @default(NEW)
+  comment       String?
+  createdById   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  participants BookingParticipant[]
+
+  @@index([venueId, startsAt])
+  @@index([status])
+  @@map("bookings")
+}
+
+model BookingParticipant {
+  id           String          @id @default(uuid())
+  bookingId    String
+  userId       String?
+  isGuest      Boolean         @default(false)
+  role         ParticipantRole @default(PLAYER)
+  displayName  String?
+  creditedAt   DateTime?
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([userId])
+  @@map("booking_participants")
+}
+
+model GiftCertificate {
+  id           String            @id @default(uuid())
+  venueId      String
+  code         String            @unique
+  title        String
+  minutes      Int
+  priceTenge   Int
+  saleId       String?
+  status       CertificateStatus @default(SOLD)
+  soldAt       DateTime          @default(now())
+  activateBy   DateTime
+  activatedAt  DateTime?
+  activatedFor String?
+  createdById  String
+
+  @@index([status])
+  @@map("gift_certificates")
+}
+
+model ClientSource {
+  id       String  @id @default(uuid())
+  code     String  @unique
+  label    String
+  active   Boolean @default(true)
+  sortOrder Int    @default(0)
+
+  @@map("client_sources")
+}
+
+model PhoneChangeRequest {
+  id          String            @id @default(uuid())
+  userId      String
+  newPhone    String
+  reason      String
+  status      PhoneChangeStatus @default(PENDING)
+  requestedBy String
+  decidedBy   String?
+  createdAt   DateTime          @default(now())
+  decidedAt   DateTime?
+
+  @@index([status])
+  @@map("phone_change_requests")
+}
+
+model VisitDay {
+  id        String   @id @default(uuid())
+  userId    String
+  day       String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, day])
+  @@map("visit_days")
+}
+
+model StatusPlay {
+  id        String   @id @default(uuid())
+  userId    String
+  sessionId String
+  minutes   Int
+  playedAt  DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([sessionId, userId])
+  @@index([userId, playedAt])
+  @@map("status_plays")
+}
+
+model StockMove {
+  id         String   @id @default(uuid())
+  itemId     String
+  qty        Int
+  kind       String
+  reason     String?
+  shiftId    String?
+  operatorId String?
+  createdAt  DateTime @default(now())
+
+  @@index([itemId, createdAt])
+  @@map("stock_moves")
+}
+
+model TvScreen {
+  id          String   @id @default(uuid())
+  venueId     String
+  keyHash     String
+  seconds     Int      @default(15)
+  topN        Int      @default(10)
+  sponsorOn   Boolean  @default(false)
+  sponsorText String?
+  ticker      String?
+  createdAt   DateTime @default(now())
+
+  @@index([venueId])
+  @@map("tv_screens")
 }

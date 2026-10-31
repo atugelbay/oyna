@@ -737,6 +737,7 @@ export function BalanceTopUpPanel({
                   {computed.totalPay.toLocaleString("ru-RU")}
                   <span className="ml-1 text-base">₸</span>
                 </p>
+                <p className="mt-1 text-[11px] text-amber-300">Оплаченные минуты действуют 24 часа</p>
                 <p className="mt-1 whitespace-nowrap text-[11px] text-text-secondary">Итого к оплате</p>
               </div>
               <Button

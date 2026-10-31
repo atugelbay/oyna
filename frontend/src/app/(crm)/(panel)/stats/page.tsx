@@ -265,10 +265,10 @@ export default function StatsPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
         <div className="min-w-0 space-y-4">
           <div className="rounded-xl bg-bg-secondary p-6">
-            <div className="flex flex-wrap items-center gap-6 sm:flex-nowrap">
+            <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-center">
               <DonutChart data={revenueData} total={totalRevenue} size={168} />
               <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
-                <p className="text-3xl font-bold tabular-nums text-text-primary sm:text-4xl">
+                <p className="max-w-full break-words text-2xl font-bold tabular-nums text-text-primary sm:text-4xl">
                   {formatMoney(totalRevenue)}
                 </p>
                 <p className="text-sm text-text-secondary">Выручка за период</p>
@@ -326,23 +326,17 @@ export default function StatsPage() {
               <p className="mt-1 text-2xl font-bold tabular-nums text-success">+{overview?.newPlayers ?? 0}</p>
             </div>
             <div className="rounded-xl bg-bg-secondary p-4">
-              <p className="flex items-start justify-between gap-2 text-xs text-text-secondary">
-                <span className="flex min-w-0 items-center gap-1">
-                  <SessionsIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="leading-tight">Количество сессий</span>
-                </span>
-                <Link
-                  href="/results"
-                  className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-cyan hover:underline"
-                >
-                  История
-                  <HistoryIcon className="h-3 w-3" />
-                </Link>
+              <p className="flex items-center gap-1 text-xs text-text-secondary">
+                <SessionsIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="leading-tight">Количество сессий</span>
               </p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-text-primary">{overview?.totalSessions ?? 0}</p>
+              <Link href="/sessions-log" className="mt-2 inline-flex min-h-11 items-center text-xs font-medium text-cyan">
+                Журнал сеансов
+              </Link>
             </div>
             <div className="rounded-xl bg-bg-secondary p-4">
-              <p className="text-xs text-text-secondary">Суммарное время сессий</p>
+              <p className="text-xs text-text-secondary">Сумма минут списанных сеансов (прерванные короче 10)</p>
               <p className="mt-1 text-2xl font-bold tabular-nums text-text-primary">
                 {Math.round(overview?.totalSessionMinutes ?? 0).toLocaleString("ru-RU")} мин
               </p>

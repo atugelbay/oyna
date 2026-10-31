@@ -7,25 +7,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TopupDto } from './dto/topup.dto';
 import { GuestSaleDto } from './dto/guest-sale.dto';
 import { TransactionType, TransactionSource } from '@prisma/client';
+import { MinuteLedgerService } from '../ledger/minute-ledger.service';
+import type { LoyaltyTier } from '../domain/rules';
 
 @Injectable()
 export class BalanceService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private ledger: MinuteLedgerService,
+  ) {}
 
   async getBalance(userId: string) {
-    const balance = await this.prisma.accountBalance.findUnique({
-      where: { userId },
-    });
-
-    if (!balance) {
-      throw new NotFoundException('Баланс не найден');
-    }
-
-    return {
-      userId,
-      availableSeconds: balance.availableSeconds,
-      availableMinutes: Math.floor(balance.availableSeconds / 60),
-    };
+    const prepared = await this.ledger.prepareBalance(userId);
+    return { userId, ...prepared };
   }
 
   /**
@@ -49,6 +43,7 @@ export class BalanceService {
       }
     }
 
+    if (dto.venueId) await this.requireOpenShift(dto.venueId);
     const comment = (dto.comment?.trim() || 'Гость').slice(0, 200);
     const packagePart = dto.packageName?.trim()
       ? ` «${dto.packageName.trim().slice(0, 120)}»`
@@ -83,12 +78,19 @@ export class BalanceService {
     if (!user) {
       throw new NotFoundException('Пользователь не найден');
     }
+    if (user.blockPermanent || (user.blockedUntil && user.blockedUntil > new Date())) {
+      throw new BadRequestException('Аккаунт заблокирован');
+    }
+    if (dto.venueId) await this.requireOpenShift(dto.venueId);
 
     const bonusSeconds = dto.bonusSeconds ?? 0;
     if (bonusSeconds > dto.seconds) {
       throw new BadRequestException('bonusSeconds не может быть больше seconds');
     }
     const purchaseSeconds = dto.seconds - bonusSeconds;
+    if (purchaseSeconds % 600 !== 0 || bonusSeconds % 600 !== 0) {
+      throw new BadRequestException('Минуты кратны 10. Оплаченные минуты действуют 24 часа');
+    }
     if (bonusSeconds > 0 && purchaseSeconds < 60) {
       throw new BadRequestException(
         'При наличии бонусных секунд оплачиваемая часть должна быть не менее 60 с',
@@ -98,12 +100,10 @@ export class BalanceService {
     const result = await this.prisma.$transaction(async (tx) => {
       const balance = await tx.accountBalance.upsert({
         where: { userId: dto.userId },
-        update: {
-          availableSeconds: { increment: dto.seconds },
-        },
+        update: {},
         create: {
           userId: dto.userId,
-          availableSeconds: dto.seconds,
+          availableSeconds: 0,
         },
       });
 
@@ -140,12 +140,34 @@ export class BalanceService {
       return { balance, transaction: purchase };
     });
 
+    const paidSeconds = dto.seconds - bonusSeconds;
+    const credited = await this.ledger.creditTopup({
+      userId: dto.userId,
+      paidSeconds,
+      bonusSeconds,
+      tier: user.loyaltyStatus as LoyaltyTier,
+      operatorId,
+      transactionId: result.transaction.id,
+      venueId: dto.venueId,
+      description: result.transaction.description ?? 'Пополнение',
+    });
+
     return {
       userId: dto.userId,
-      newBalanceSeconds: result.balance.availableSeconds,
-      newBalanceMinutes: Math.floor(result.balance.availableSeconds / 60),
+      newBalanceSeconds: credited.availableSeconds,
+      newBalanceMinutes: Math.floor(credited.availableSeconds / 60),
       transactionId: result.transaction.id,
+      paidExpiresAt: credited.paidExpiresAt,
+      bonusMinutes: credited.bonusMinutes,
+      notice: credited.notice,
     };
+  }
+
+  private async requireOpenShift(venueId: string) {
+    const shift = await this.prisma.cashShift.findFirst({
+      where: { venueId, status: 'OPEN' },
+    });
+    if (!shift) throw new BadRequestException('Откройте смену');
   }
 
   async deduct(userId: string, seconds: number, description: string) {

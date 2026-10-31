@@ -9,10 +9,19 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Главная", icon: "/icons/navbar/home.png" },
   { href: "/players", label: "Игроки", icon: "/icons/navbar/players.png" },
   { href: "/rooms", label: "Игровые комнаты", icon: "/icons/navbar/rooms.png" },
+  { href: "/live", label: "Сейчас в зале", icon: "/icons/navbar/rooms.png" },
+  { href: "/cash", label: "Касса", icon: "/icons/navbar/stats.png" },
+  { href: "/payments", label: "Оплаты", icon: "/icons/navbar/stats.png" },
+  { href: "/bookings", label: "Брони", icon: "/icons/navbar/tournaments.png" },
   { href: "/results", label: "Результаты игроков", icon: "/icons/navbar/results.png" },
   { href: "/tournaments", label: "Турниры", icon: "/icons/navbar/tournaments.png" },
   { href: "/promos", label: "Акции", icon: "/icons/navbar/stats.png" },
   { href: "/stats", label: "Статистика", icon: "/icons/navbar/promos.png" },
+  { href: "/finance", label: "Финансы", icon: "/icons/navbar/promos.png" },
+  { href: "/operators", label: "Операторы", icon: "/icons/navbar/stats.png" },
+  { href: "/certificates", label: "Сертификаты", icon: "/icons/navbar/promos.png" },
+  { href: "/schedule", label: "График", icon: "/icons/navbar/players.png" },
+  { href: "/sources", label: "Источники", icon: "/icons/navbar/stats.png" },
 ];
 
 /** Навигация на том же градиентном фоне, что и шапка (без отдельной «плашки») */
@@ -22,7 +31,7 @@ export function CrmSidebar() {
 
   return (
     <aside
-      className={`flex shrink-0 flex-col bg-transparent py-2 transition-[width] duration-200 ease-out ${railWidthClass}`}
+      className={`hidden shrink-0 flex-col bg-transparent py-2 transition-[width] duration-200 ease-out md:flex ${railWidthClass}`}
     >
       <nav
         id="crm-sidebar-nav"

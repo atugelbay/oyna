@@ -25,7 +25,7 @@ export default function HomePage() {
   const [promosError, setPromosError] = useState(false);
   useEffect(() => {
     balanceService.getBalance().then(b => setMinutes(b.displayMinutes)).catch(e => setError(apiError(e)));
-    leaderboardService.getLeaderboard(3).then(setLeaders).catch(() => setLeadersError(true));
+    leaderboardService.getLeaderboard({ limit: 3, period: 'day' }).then((data) => setLeaders(data.items ?? [])).catch(() => setLeadersError(true));
     venuesService.getVenues().then(setVenues).catch(() => {});
   }, []);
   useEffect(() => {

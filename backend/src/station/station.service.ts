@@ -15,6 +15,8 @@ import { GameSessionsService } from '../game-sessions/game-sessions.service';
 import { LobbyQrService } from './lobby-qr.service';
 import { HallRecordsService } from './hall-records.service';
 import { PlayerLobbyService } from './player-lobby.service';
+import { LoyaltyService } from '../loyalty/loyalty.service';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class StationService {
@@ -25,6 +27,7 @@ export class StationService {
     private lobbyQr: LobbyQrService,
     private hallRecords: HallRecordsService,
     private playerLobby: PlayerLobbyService,
+    private loyalty: LoyaltyService,
   ) {}
 
   async heartbeat(roomId: string, dto: StationHeartbeatDto) {
@@ -455,6 +458,7 @@ export class StationService {
         modeId: mode.id,
         venueId: room.venueId,
         engineSessionId: params.engineSessionId,
+        sessionToken: randomBytes(32).toString('hex'),
         status: SessionStatus.ACTIVE,
         startTime: params.startedAt,
         players: {
@@ -512,6 +516,19 @@ export class StationService {
         unlockDetail = `;unlock=${u.unlockedLevel}:n=${u.updated}`;
       } else {
         unlockDetail = ';unlock=skipped:no_players';
+      }
+    }
+
+    const reason = typeof payload.reason === 'string' ? payload.reason : '';
+    const completed = reason === 'completed' || payload.victory === true || payload.bVictory === true;
+    if (level === 10 && completed && engineModeId && !engineModeId.includes('OYNAVirtual')) {
+      const full = await this.prisma.gameSession.findUnique({
+        where: { id: session.id },
+        include: { mode: true, players: true },
+      });
+      if (full && full.mode.type === GameModeType.COOP && !full.isTournament) {
+        const ids = full.players.map((p) => p.userId).filter((id) => id.length > 0);
+        await this.loyalty.onLevelTen(ids, engineModeId);
       }
     }
 
