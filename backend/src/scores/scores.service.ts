@@ -61,12 +61,16 @@ export class ScoresService {
 
     const userMap = new Map(users.map((u) => [u.id, u]));
 
-    return scores.map((s, index) => ({
-      rank: index + 1,
-      userId: s.userId,
-      user: userMap.get(s.userId),
-      totalScore: s._sum.score,
-    }));
+    return scores.map((s, index) => {
+      const user = userMap.get(s.userId);
+      return {
+        rank: index + 1,
+        user: user
+          ? { nickname: user.nickname, loyaltyStatus: user.loyaltyStatus }
+          : null,
+        totalScore: s._sum.score,
+      };
+    });
   }
 
   async getLeaderboard(params: {
@@ -125,8 +129,8 @@ export class ScoresService {
 
     return scores.map((s, index) => ({
       rank: (page - 1) * limit + index + 1,
-      userId: s.userId,
       nickname: userMap.get(s.userId)?.nickname,
+      status: userMap.get(s.userId)?.loyaltyStatus ?? null,
       score: s._sum.score ?? 0,
     }));
   }

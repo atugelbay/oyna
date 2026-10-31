@@ -83,8 +83,10 @@ export class UsersController {
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateUserDto,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
   ) {
-    return this.usersService.update(id, dto);
+    return this.usersService.update(id, dto, { id: actorId, role: actorRole });
   }
 }
 

@@ -1,4 +1,6 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { clientIp } from '../security/rate-limit.service';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -18,8 +20,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Регистрация нового пользователя' })
   @ApiResponse({ status: 201, description: 'Пользователь создан' })
   @ApiResponse({ status: 409, description: 'Телефон или ник уже занят' })
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  register(@Body() dto: RegisterDto, @Req() req: Request) {
+    return this.authService.register(dto, clientIp(req));
   }
 
   @Post('request-otp')
@@ -44,8 +46,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Вход в CRM (пароль или код)' })
   @ApiResponse({ status: 200, description: 'Успешный вход' })
   @ApiResponse({ status: 401, description: 'Неверные данные' })
-  crmLogin(@Body() dto: CrmLoginDto) {
-    return this.authService.crmLogin(dto);
+  crmLogin(@Body() dto: CrmLoginDto, @Req() req: Request) {
+    return this.authService.crmLogin(dto, clientIp(req));
   }
 
   @Post('refresh')

@@ -18,6 +18,12 @@ export class BalanceController {
     return this.balanceService.getBalance(user.id);
   }
 
+  @Get('ledger')
+  @ApiOperation({ summary: 'Minute grant journal for the current player' })
+  ledger(@CurrentUser() user: CurrentUserPayload) {
+    return this.balanceService.getLedger(user.id);
+  }
+
   @Get('transactions')
   @ApiOperation({ summary: 'Get transaction history' })
   @ApiQuery({ name: 'page', required: false, type: Number })

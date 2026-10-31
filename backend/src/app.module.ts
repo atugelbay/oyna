@@ -15,6 +15,12 @@ import { TournamentsModule } from './tournaments/tournaments.module';
 import { StatsModule } from './stats/stats.module';
 import { SettingsModule } from './settings/settings.module';
 import { StationModule } from './station/station.module';
+import { LedgerModule } from './ledger/ledger.module';
+import { SecurityModule } from './security/security.module';
+import { RatingModule } from './rating/rating.module';
+import { CashModule } from './cash/cash.module';
+import { LoyaltyModule } from './loyalty/loyalty.module';
+import { OpsModule } from './ops/ops.module';
 
 @Module({
   imports: [
@@ -34,6 +40,12 @@ import { StationModule } from './station/station.module';
     StatsModule,
     SettingsModule,
     StationModule,
+    LedgerModule,
+    SecurityModule,
+    RatingModule,
+    CashModule,
+    LoyaltyModule,
+    OpsModule,
   ],
 })
 export class AppModule {}

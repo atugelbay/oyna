@@ -36,8 +36,21 @@ export function CrmShellLayout({ children }: { children: ReactNode }) {
       <div className="flex min-h-0 flex-1">
         <CrmSidebar />
         <main className="crm-main-panel min-h-0 min-w-0 flex-1 overflow-hidden">
-          <div className="h-full overflow-auto p-6">{children}</div>
+          <div className="h-full overflow-auto p-4 pb-24 md:p-6 md:pb-6">{children}</div>
         </main>
+        <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-white/10 bg-[#0a0f14] md:hidden">
+          {[
+            ["/dashboard", "Главная"],
+            ["/cash", "Касса"],
+            ["/live", "Зал"],
+            ["/players", "Игроки"],
+            ["/stats", "Ещё"],
+          ].map(([href, label]) => (
+            <a key={href} href={href} className="flex min-h-14 flex-1 items-center justify-center px-1 text-center text-[11px] text-white">
+              {label}
+            </a>
+          ))}
+        </nav>
       </div>
     </div>
   );

@@ -73,6 +73,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [fromRoom, setFromRoom] = useState(false);
+  const [offerAccepted, setOfferAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [guardianConfirmed, setGuardianConfirmed] = useState(false);
 
   useEffect(() => {
     setFromRoom(!!pendingLobby());
@@ -103,6 +106,10 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         setError("Пароли не совпадают");
         return;
       }
+      if (!offerAccepted || !privacyAccepted || !guardianConfirmed) {
+        setError("Нужны согласие с офертой, согласие на данные и подтверждение родителя");
+        return;
+      }
     } else if (!identifier.trim() || !password) {
       setError("Введи никнейм или телефон и пароль");
       return;
@@ -119,6 +126,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           password,
           nickname.trim().toLowerCase(),
           birthDate || undefined,
+          { offerAccepted, privacyAccepted, guardianConfirmed },
         );
       else await login(identifier.trim(), password);
       router.replace(afterAuthentication());
@@ -271,6 +279,18 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                 className="input-field"
               />
             </div>
+            <label className="flex min-h-11 items-start gap-3 text-xs leading-relaxed text-slate-300">
+              <input type="checkbox" className="mt-1 h-5 w-5" checked={offerAccepted} onChange={(e) => setOfferAccepted(e.target.checked)} />
+              <span>Согласен с <Link href="/offer" className="text-brand">публичной офертой</Link>. Оплаченные минуты действуют 24 часа.</span>
+            </label>
+            <label className="flex min-h-11 items-start gap-3 text-xs leading-relaxed text-slate-300">
+              <input type="checkbox" className="mt-1 h-5 w-5" checked={privacyAccepted} onChange={(e) => setPrivacyAccepted(e.target.checked)} />
+              <span>Согласен на <Link href="/privacy" className="text-brand">сбор и обработку персональных данных</Link>.</span>
+            </label>
+            <label className="flex min-h-11 items-start gap-3 text-xs leading-relaxed text-slate-300">
+              <input type="checkbox" className="mt-1 h-5 w-5" checked={guardianConfirmed} onChange={(e) => setGuardianConfirmed(e.target.checked)} />
+              <span>Регистрирую себя (18+) или своего ребёнка как родитель / законный представитель.</span>
+            </label>
           </>
         )}
         {error && (

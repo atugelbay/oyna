@@ -18,6 +18,9 @@ import {
   TransactionType,
   TransactionSource,
 } from '@prisma/client';
+import { randomBytes } from 'crypto';
+import { MinuteLedgerService } from '../ledger/minute-ledger.service';
+import { LoyaltyService } from '../loyalty/loyalty.service';
 
 /** Минимум на балансе у каждого игрока для старта сессии (10 мин) */
 const MIN_BALANCE_SECONDS = 600;
@@ -51,6 +54,8 @@ export class GameSessionsService {
     private prisma: PrismaService,
     private roomAgentCommands: RoomAgentCommandsService,
     private playerLobby: PlayerLobbyService,
+    private ledger: MinuteLedgerService,
+    private loyalty: LoyaltyService,
   ) {}
 
   /** CRM может передать primary key или sessionToken (оба uuid) */
@@ -87,16 +92,14 @@ export class GameSessionsService {
     }
 
     for (const playerId of dto.playerIds) {
-      const balance = await this.prisma.accountBalance.findUnique({
-        where: { userId: playerId },
-      });
-
-      if (!balance || balance.availableSeconds < MIN_BALANCE_SECONDS) {
-        const user = await this.prisma.user.findUnique({
-          where: { id: playerId },
-        });
+      const user = await this.prisma.user.findUnique({ where: { id: playerId } });
+      if (!user || !user.isActive || user.blockPermanent || (user.blockedUntil && user.blockedUntil > new Date())) {
+        throw new BadRequestException(`Игрок ${user?.nickname || playerId} не может начать сеанс`);
+      }
+      const balance = await this.ledger.prepareBalance(playerId);
+      if (balance.availableSeconds < MIN_BALANCE_SECONDS) {
         throw new BadRequestException(
-          `У игрока ${user?.nickname || playerId} недостаточно времени на балансе (нужно минимум ${MIN_BALANCE_SECONDS / 60} мин у каждого)`,
+          `У игрока ${user.nickname || playerId} недостаточно времени на балансе (нужно минимум ${MIN_BALANCE_SECONDS / 60} мин у каждого). Оплаченные минуты действуют 24 часа`,
         );
       }
     }
@@ -106,6 +109,7 @@ export class GameSessionsService {
         roomId: dto.roomId,
         modeId: dto.modeId,
         venueId: dto.venueId,
+        sessionToken: randomBytes(32).toString('hex'),
         status: SessionStatus.PENDING,
         players: {
           create: dto.playerIds.map((userId) => ({ userId })),
@@ -260,40 +264,49 @@ export class GameSessionsService {
       return { sessionId, alreadyDebited: true, deductedSeconds: session.deductedSeconds };
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const player of session.players) {
-        const balance = await tx.accountBalance.findUnique({
-          where: { userId: player.userId },
-        });
-        if (!balance) continue;
-
-        const deduct = Math.min(MIN_BALANCE_SECONDS, balance.availableSeconds);
-        if (deduct <= 0) continue;
-
-        await tx.accountBalance.update({
-          where: { userId: player.userId },
-          data: { availableSeconds: { decrement: deduct } },
-        });
-        await tx.transaction.create({
+    let paid = 0;
+    let bonus = 0;
+    let manual = 0;
+    for (const player of [...session.players].sort((a, b) => a.userId.localeCompare(b.userId))) {
+      try {
+        const spent = await this.ledger.spendForSession(player.userId, sessionId, MIN_BALANCE_SECONDS);
+        paid += spent.paid;
+        bonus += spent.bonus;
+        manual += spent.manual;
+        await this.prisma.transaction.create({
           data: {
             userId: player.userId,
             type: TransactionType.GAME_DEBIT,
             source: TransactionSource.CASHIER,
             amountTenge: 0,
-            equivalentSeconds: -deduct,
+            equivalentSeconds: -spent.taken,
             venueId: session.venueId,
-            description: `Старт сессии ${sessionId}: -${Math.ceil(deduct / 60)} мин`,
+            description: `Старт сессии ${sessionId}: -${Math.ceil(spent.taken / 60)} мин`,
           },
         });
+        if (!session.isTournament) {
+          await this.loyalty.onSessionDebit({
+            userId: player.userId,
+            sessionId,
+            paidSeconds: spent.paid,
+            bonusSeconds: spent.bonus,
+            manualSeconds: spent.manual,
+          });
+        }
+      } catch (err) {
+        if (!(err instanceof BadRequestException)) throw err;
       }
+    }
 
-      await tx.gameSession.update({
-        where: { id: sessionId },
-        data: {
-          balanceDebitedAt: new Date(),
-          deductedSeconds: MIN_BALANCE_SECONDS,
-        },
-      });
+    await this.prisma.gameSession.update({
+      where: { id: sessionId },
+      data: {
+        balanceDebitedAt: new Date(),
+        deductedSeconds: MIN_BALANCE_SECONDS,
+        paidSecondsDebited: paid,
+        bonusSecondsDebited: bonus,
+        countsForRating: manual === 0 && !session.isTournament,
+      },
     });
 
     return { sessionId, alreadyDebited: false, deductedSeconds: MIN_BALANCE_SECONDS };
@@ -498,44 +511,12 @@ export class GameSessionsService {
         }
       }
 
-      // Повторно не списываем: канон — 10 мин на session_started.
-      if (!alreadyDebited) {
-        for (const player of session.players) {
-          const balance = await tx.accountBalance.findUnique({
-            where: { userId: player.userId },
-          });
-
-          if (balance) {
-            const deduct = Math.min(dto.durationSeconds, balance.availableSeconds);
-            await tx.accountBalance.update({
-              where: { userId: player.userId },
-              data: { availableSeconds: { decrement: deduct } },
-            });
-
-            await tx.transaction.create({
-              data: {
-                userId: player.userId,
-                type: TransactionType.GAME_DEBIT,
-                source: TransactionSource.CASHIER,
-                amountTenge: 0,
-                equivalentSeconds: -deduct,
-                venueId: session.venueId,
-                description: `Игровая сессия ${pk}: -${Math.ceil(deduct / 60)} мин`,
-              },
-            });
-          }
-        }
-
-        if (!session.balanceDebitedAt) {
-          await tx.gameSession.update({
-            where: { id: pk },
-            data: { balanceDebitedAt: new Date() },
-          });
-        }
-      }
-
       return { session: updatedSession, scores };
     });
+
+    if (!alreadyDebited) {
+      await this.debitBalanceOnSessionStart(pk);
+    }
 
     return {
       sessionId: result.session.id,
@@ -607,7 +588,24 @@ export class GameSessionsService {
     });
 
     if (!session) throw new NotFoundException('Сессия не найдена');
-    return session;
+    const dead = session.status === SessionStatus.COMPLETED
+      || session.status === SessionStatus.CANCELLED
+      || session.status === SessionStatus.ERROR;
+    const pendingExpired = session.status === SessionStatus.PENDING
+      && Date.now() - session.createdAt.getTime() > 10 * 60 * 1000;
+    if (dead || pendingExpired) throw new NotFoundException('Сессия не найдена');
+    return {
+      id: session.id,
+      status: session.status,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      room: { id: session.room.id, name: session.room.name, engineRoomId: session.room.engineRoomId },
+      mode: { id: session.mode.id, name: session.mode.name },
+      players: session.players.map((p) => ({
+        id: p.user.id,
+        nickname: p.user.nickname,
+      })),
+    };
   }
 }
 

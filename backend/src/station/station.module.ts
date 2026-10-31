@@ -7,9 +7,11 @@ import { HallRecordsService } from './hall-records.service';
 import { PlayerLobbyService } from './player-lobby.service';
 import { StationAuthGuard } from './guards/station-auth.guard';
 import { GameSessionsModule } from '../game-sessions/game-sessions.module';
+import { RatingModule } from '../rating/rating.module';
+import { LoyaltyModule } from '../loyalty/loyalty.module';
 
 @Module({
-  imports: [forwardRef(() => GameSessionsModule)],
+  imports: [forwardRef(() => GameSessionsModule), RatingModule, LoyaltyModule],
   controllers: [StationController],
   providers: [
     StationService,

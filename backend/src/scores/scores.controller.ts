@@ -8,8 +8,10 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ScoresService } from './scores.service';
+import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '../common/decorators';
+import { RolesGuard } from '../common/guards';
+import { CurrentUser, Roles } from '../common/decorators';
 
 @ApiTags('Scores')
 @Controller('scores')
@@ -17,6 +19,9 @@ export class ScoresController {
   constructor(private scoresService: ScoresService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Список результатов (с фильтрами)' })
   @ApiQuery({ name: 'userId', required: false })
   @ApiQuery({ name: 'roomId', required: false })
@@ -84,6 +89,9 @@ export class ScoresController {
   }
 
   @Get('stats/:userId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Статистика пользователя по ID' })
   getUserStats(@Param('userId', ParseUUIDPipe) userId: string) {
     return this.scoresService.getUserStats(userId);

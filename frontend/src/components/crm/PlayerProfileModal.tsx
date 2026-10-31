@@ -8,6 +8,7 @@ import { SegmentBadge } from "@/components/crm/SegmentBadge";
 import { readApiUserError } from "@/lib/api-error-message";
 import { playersService } from "@/services/players.service";
 import { useCrmVenue } from "@/lib/venue-context";
+import api from "@/lib/api";
 import type { Segment } from "@/app/(crm)/(panel)/players/types";
 
 function sessionsWord(n: number): string {
@@ -38,6 +39,7 @@ export function PlayerProfileModal({ playerId, isOpen, onClose, initialTopUpOpen
   const [player, setPlayer] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [ledger, setLedger] = useState<{ id: string; type: string; minutes: number; atAlmaty: string; kind: string | null; reason: string | null }[]>([]);
 
   useEffect(() => {
     setMounted(true);
@@ -92,6 +94,16 @@ export function PlayerProfileModal({ playerId, isOpen, onClose, initialTopUpOpen
     return () => {
       cancelled = true;
     };
+  }, [isOpen, playerId]);
+
+  useEffect(() => {
+    if (!isOpen || !playerId) {
+      setLedger([]);
+      return;
+    }
+    api.get(`/balance/ledger/${playerId}`)
+      .then(({ data }) => setLedger(data.data ?? []))
+      .catch(() => setLedger([]));
   }, [isOpen, playerId]);
 
   if (!mounted) return null;
@@ -182,6 +194,16 @@ export function PlayerProfileModal({ playerId, isOpen, onClose, initialTopUpOpen
           </div>
         </div>
       </div>
+      {ledger.length > 0 && (
+        <div className="rounded-xl bg-[#1F2B38] px-5 py-4">
+          <p className="mb-2 text-xs text-text-secondary">Журнал минут</p>
+          {ledger.slice(0, 6).map((row) => (
+            <p key={row.id} className="text-xs text-text-primary">
+              {row.atAlmaty} · {row.type} {row.minutes} мин{row.kind ? ` · ${row.kind}` : ""}
+            </p>
+          ))}
+        </div>
+      )}
     </>
   );
 

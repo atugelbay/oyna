@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/lib/auth-context';
+import { I18nProvider } from '@/lib/i18n';
 
 export const metadata: Metadata = {
   title: 'OYNA — Личный кабинет',
@@ -18,8 +19,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru">
+    <html lang="kk">
       <body>
+        <I18nProvider>
         <AuthProvider>
           <div className="flex justify-center">
             <div className="app-shell w-full max-w-mobile relative">
@@ -27,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
         </AuthProvider>
+        </I18nProvider>
       </body>
     </html>
   );

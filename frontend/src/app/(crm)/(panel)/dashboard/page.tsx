@@ -25,6 +25,7 @@ import { PlayerProfileModal } from "@/components/crm/PlayerProfileModal";
 import { readApiUserError } from "@/lib/api-error-message";
 import { playersService } from "@/services/players.service";
 import { useCrmVenue } from "@/lib/venue-context";
+import { UpcomingBookings } from "@/components/crm/UpcomingBookings";
 
 const CHART_COLORS = ["#36D399", "#7AA2FF", "#A78BFA", "#F59E0B", "#FB7185"];
 const dashboardContainerFill = "#19232E";
@@ -222,6 +223,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-white">За сегодня</h1>
         <p className="text-text-secondary mt-1 text-sm">{dateStr}</p>
       </div>
+      <UpcomingBookings />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-7 flex flex-col gap-6 w-full min-w-0">

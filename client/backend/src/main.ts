@@ -16,8 +16,17 @@ async function bootstrap() {
     }),
   );
 
+  const isProd = process.env.NODE_ENV === 'production';
+  app.use((_req: unknown, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    if (isProd) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+    next();
+  });
+  const corsOrigin = process.env.CLIENT_FRONTEND_URL || (!isProd ? 'http://localhost:3003' : undefined);
   app.enableCors({
-    origin: process.env.CLIENT_FRONTEND_URL || 'http://localhost:3003',
+    origin: corsOrigin ? corsOrigin.split(',').map((s) => s.trim()) : false,
     credentials: true,
   });
 
@@ -27,8 +36,10 @@ async function bootstrap() {
     .setVersion('1.0')
     .addBearerAuth()
     .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('client-api/docs', app, document);
+  if (!isProd) {
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('client-api/docs', app, document);
+  }
 
   const port = process.env.PORT ?? 3002;
   await app.listen(port);

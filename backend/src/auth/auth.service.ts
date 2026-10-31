@@ -7,10 +7,14 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto, RequestOtpDto, VerifyOtpDto, RefreshDto } from './dto';
 import { normalizeKzPhone } from '../common/utils/phone.util';
 import * as bcrypt from 'bcrypt';
+import { RateLimitService } from '../security/rate-limit.service';
+import { randomBytes } from 'crypto';
+import { referralCode } from '../domain/rules';
 
 const MVP_OTP_CODE = '1234';
 
@@ -22,9 +26,11 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private rateLimit: RateLimitService,
   ) {}
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, ip = 'unknown') {
+    await this.rateLimit.assertRegister(ip);
     const existingPhone = await this.prisma.user.findUnique({
       where: { phone: dto.phone },
     });
@@ -45,6 +51,8 @@ export class AuthService {
         nickname: dto.nickname,
         name: dto.name,
         birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
+        birthDateLocked: !!dto.birthDate,
+        referralCode: referralCode(randomBytes(6)),
         balance: {
           create: { availableSeconds: 0 },
         },
@@ -70,19 +78,22 @@ export class AuthService {
   }
 
   async requestOtp(dto: RequestOtpDto) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new NotFoundException();
+    }
     const user = await this.prisma.user.findUnique({
       where: { phone: dto.phone },
     });
     if (!user) {
       throw new BadRequestException('Пользователь с таким телефоном не найден');
     }
-
-    this.logger.log(`OTP для ${dto.phone}: ${MVP_OTP_CODE}`);
-
     return { message: 'OTP отправлен', phone: dto.phone };
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new NotFoundException();
+    }
     if (dto.code !== MVP_OTP_CODE) {
       throw new UnauthorizedException('Неверный код');
     }
@@ -117,14 +128,18 @@ export class AuthService {
     };
   }
 
-  async crmLogin(dto: { phone: string; password?: string; code?: string; isEmployee?: boolean }) {
+  async crmLogin(dto: { phone: string; password?: string; code?: string; isEmployee?: boolean }, ip = 'unknown') {
+    await this.rateLimit.assertLoginIp(ip);
     const phoneNorm = normalizeKzPhone(dto.phone);
+    const lockKey = `crm:${phoneNorm}`;
+    await this.rateLimit.assertNotLocked(lockKey);
     const user = await this.prisma.user.findUnique({
       where: { phone: phoneNorm },
       include: { balance: true },
     });
 
     if (!user) {
+      await this.rateLimit.recordFailure(lockKey);
       throw new UnauthorizedException('Пользователь не найден');
     }
 
@@ -143,6 +158,7 @@ export class AuthService {
       'CRM_EXTRA_5',
     ];
     if (!allowedRoles.includes(user.role)) {
+      await this.rateLimit.recordFailure(lockKey);
       throw new UnauthorizedException('Нет доступа к CRM');
     }
 
@@ -151,6 +167,12 @@ export class AuthService {
         where: { role: user.role as any, code: dto.code },
       });
       if (!accessCode) {
+        const failed = await this.rateLimit.recordFailure(lockKey);
+        if (failed.locked) {
+          await this.prisma.auditLog.create({
+            data: { action: 'crm_login_locked', entity: 'user', entityId: user.id, ip, detail: phoneNorm.slice(-4) },
+          });
+        }
         throw new UnauthorizedException('Неверный код доступа');
       }
     } else if (dto.password) {
@@ -159,12 +181,19 @@ export class AuthService {
       }
       const isValid = await bcrypt.compare(dto.password, user.passwordHash);
       if (!isValid) {
+        const failed = await this.rateLimit.recordFailure(lockKey);
+        if (failed.locked) {
+          await this.prisma.auditLog.create({
+            data: { action: 'crm_login_locked', entity: 'user', entityId: user.id, ip, detail: phoneNorm.slice(-4) },
+          });
+        }
         throw new UnauthorizedException('Неверный пароль');
       }
     } else {
       throw new BadRequestException('Необходим пароль или код доступа');
     }
 
+    await this.rateLimit.clearFailures(lockKey);
     const tokens = await this.generateTokens(user.id, user.phone, user.role);
 
     return {
