@@ -170,12 +170,48 @@ export default function DashboardPage() {
   }, [selectedVenueId]);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
     statsService
       .getDashboard(selectedVenueId ?? undefined)
-      .then(setData)
-      .catch((err) => setError(readApiUserError(err, "Ошибка загрузки данных")))
-      .finally(() => setLoading(false));
+      .then((d) => {
+        if (!cancelled) {
+          setData(d);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(readApiUserError(err, "Ошибка загрузки данных"));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedVenueId]);
+
+  /** Живые статусы комнат: лобби / occupied / free без F5.
+   * Пока нет WS — короткий poll + refresh при возврате на вкладку. */
+  useEffect(() => {
+    const POLL_MS = 3000;
+
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      refreshDashboard();
+    };
+
+    const onVisibility = () => {
+      if (!document.hidden) refreshDashboard();
+    };
+
+    const id = window.setInterval(tick, POLL_MS);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refreshDashboard]);
 
   if (loading) return <DashboardSkeleton />;
 
