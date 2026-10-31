@@ -18,35 +18,6 @@ const rooms = [
   ['lasers', 'Лазеры'],
 ] as const;
 const ZONE = 'Asia/Almaty';
-const MONTHS_BACK = 18;
-const DAYS_BACK = 14;
-
-function almatyToday() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-}
-
-function shiftIsoDay(iso: string, delta: number) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d + delta));
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
-}
-
-function recentDays(today: string) {
-  return Array.from({ length: DAYS_BACK }, (_, i) => shiftIsoDay(today, -i));
-}
-
-function recentMonths(today: string) {
-  const [y, m] = today.split('-').map(Number);
-  return Array.from({ length: MONTHS_BACK }, (_, i) => {
-    const date = new Date(Date.UTC(y, m - 1 - i, 1));
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-  });
-}
 
 const MONTH_SHORT = {
   ru: ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'],
@@ -56,6 +27,15 @@ const MONTH_LONG = {
   ru: ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'],
   kk: ['қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мамыр', 'маусым', 'шілде', 'тамыз', 'қыркүйек', 'қазан', 'қараша', 'желтоқсан'],
 } as const;
+
+function almatyToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 function formatDay(iso: string, lang: 'kk' | 'ru', today: string) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -72,12 +52,11 @@ export default function LeaderboardPage() {
   const { user } = useAuth();
   const { t, toggle, lang } = useI18n();
   const today = almatyToday();
-  const days = recentDays(today);
-  const months = recentMonths(today);
+  const currentMonth = today.slice(0, 7);
   const [period, setPeriod] = useState<Period>('day');
   const [room, setRoom] = useState('all');
   const [selectedDate, setSelectedDate] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState(today.slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [label, setLabel] = useState('');
   const [me, setMe] = useState<{ place: number; total: number; points: number } | null>(null);
@@ -156,55 +135,38 @@ export default function LeaderboardPage() {
         ))}
       </div>
       {period === 'day' ? (
-        <div className="mb-3 space-y-2">
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {days.map((iso) => (
-              <button
-                key={iso}
-                type="button"
-                onClick={() => {
-                  setSelectedDate(iso);
-                  void load({ date: iso });
-                }}
-                className={`min-h-11 shrink-0 rounded-xl px-3 text-sm ${selectedDate === iso ? 'bg-brand text-black' : 'bg-white/5'}`}
-              >
-                {formatDay(iso, lang, today)}
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-3 text-xs text-slate-400">
-            {t('otherDay')}
-            <input
-              type="date"
-              value={selectedDate}
-              max={today}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (!value || value > today) return;
-                setSelectedDate(value);
-                void load({ date: value });
-              }}
-              className="min-h-11 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white [color-scheme:dark]"
-            />
-          </label>
-        </div>
+        <label className="mb-3 flex min-h-11 items-center gap-3 rounded-xl bg-white/5 px-3 text-sm text-slate-300">
+          <span className="shrink-0 text-xs text-slate-400">{t('pickDay')}</span>
+          <input
+            type="date"
+            value={selectedDate || today}
+            max={today}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (!value || value > today) return;
+              setSelectedDate(value);
+              void load({ date: value });
+            }}
+            className="min-h-11 w-full border-0 bg-transparent text-sm text-white outline-none [color-scheme:dark]"
+          />
+        </label>
       ) : null}
       {period === 'month' ? (
-        <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-          {months.map((iso) => (
-            <button
-              key={iso}
-              type="button"
-              onClick={() => {
-                setSelectedMonth(iso);
-                void load({ month: iso });
-              }}
-              className={`min-h-11 shrink-0 rounded-xl px-3 text-sm ${selectedMonth === iso ? 'bg-brand text-black' : 'bg-white/5'}`}
-            >
-              {formatMonth(iso, lang)}
-            </button>
-          ))}
-        </div>
+        <label className="mb-3 flex min-h-11 items-center gap-3 rounded-xl bg-white/5 px-3 text-sm text-slate-300">
+          <span className="shrink-0 text-xs text-slate-400">{t('pickMonth')}</span>
+          <input
+            type="month"
+            value={selectedMonth}
+            max={currentMonth}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (!value || value > currentMonth) return;
+              setSelectedMonth(value);
+              void load({ month: value });
+            }}
+            className="min-h-11 w-full border-0 bg-transparent text-sm text-white outline-none [color-scheme:dark]"
+          />
+        </label>
       ) : null}
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
         {rooms.map(([id, name]) => (
