@@ -498,10 +498,35 @@ export class OpsService {
     rateOver: number;
     bookingRate?: number;
   }) {
+    const data = {
+      venueId: input.venueId,
+      year: input.year,
+      month: input.month,
+      planTenge: Number(input.planTenge) || 0,
+      overplanTenge: Number(input.overplanTenge) || 0,
+      rateBelow: Number(input.rateBelow) || 0,
+      rateAt: Number(input.rateAt) || 0,
+      rateOver: Number(input.rateOver) || 0,
+      bookingRate: input.bookingRate == null ? 10 : Number(input.bookingRate),
+    };
     return this.prisma.monthlyPlan.upsert({
-      where: { venueId_year_month: { venueId: input.venueId, year: input.year, month: input.month } },
-      create: input,
-      update: input,
+      where: { venueId_year_month: { venueId: data.venueId, year: data.year, month: data.month } },
+      create: data,
+      update: data,
+    });
+  }
+
+  async getPlan(venueId: string, year: number, month: number) {
+    return this.prisma.monthlyPlan.findUnique({
+      where: { venueId_year_month: { venueId, year, month } },
+    });
+  }
+
+  async listAudit(limit = 100) {
+    const take = Math.min(Math.max(limit || 100, 1), 500);
+    return this.prisma.auditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
     });
   }
 

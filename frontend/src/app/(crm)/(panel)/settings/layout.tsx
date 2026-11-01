@@ -7,8 +7,10 @@ const TABS = [
   { href: "/settings/venues", label: "Площадки" },
   { href: "/settings/roles", label: "Роли и доступы" },
   { href: "/settings/prices", label: "Цены" },
+  { href: "/settings/plan", label: "План месяца" },
   { href: "/settings/loyalty", label: "Лояльность" },
   { href: "/settings/employees", label: "Сотрудники" },
+  { href: "/settings/audit", label: "Журнал" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

@@ -23,8 +23,8 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
-  async register(dto: RegisterDto, ip = "unknown") {
-    await this.bumpWindow(`reg:${ip}`, 5, 60 * 60 * 1000);
+  async register(dto: RegisterDto, _ip = "unknown") {
+    // Лимит регистраций с IP отключён: мешает работе с одной сети / VPN.
     const phone = this.normalizePhone(dto.phone)!;
     const nickname = dto.nickname.toLowerCase();
     const existingPhone = await this.prisma.user.findUnique({

@@ -155,6 +155,22 @@ export class OpsController {
     return this.ops.savePlan(body);
   }
 
+  @Get('finance/plan')
+  @Roles(Role.ADMIN)
+  getPlan(
+    @Query('venueId') venueId: string,
+    @Query('year') year: string,
+    @Query('month') month: string,
+  ) {
+    return this.ops.getPlan(venueId, parseInt(year, 10), parseInt(month, 10));
+  }
+
+  @Get('audit')
+  @Roles(Role.ADMIN)
+  audit(@Query('limit') limit?: string) {
+    return this.ops.listAudit(limit ? parseInt(limit, 10) : 100);
+  }
+
   @Get('finance/percents')
   @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
   percents(@Query('venueId') venueId: string, @Query('year') year: string, @Query('month') month: string) {

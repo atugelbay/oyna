@@ -291,8 +291,8 @@ export function EmployeeModal({ state, onClose, onSaved }: EmployeeModalProps) {
               {showPasswordFields ? (
                 <div className="space-y-3 rounded-xl border border-surface-border/60 bg-[#1F2B38]/50 p-3">
                   <p className="text-xs text-text-muted">
-                    Администратор входит во вкладке «Владелец» по телефону и паролю
-                    {mode === "edit" ? " (оставьте пустым, чтобы не менять пароль)" : ""}.
+                    Пароль владельца/админа для входа по телефону
+                    {mode === "edit" ? " — заполните, чтобы сбросить; пусто = без изменений" : ""}.
                   </p>
                   <Input
                     label={mode === "add" ? "Пароль" : "Новый пароль"}

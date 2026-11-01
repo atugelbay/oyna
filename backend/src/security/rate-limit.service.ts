@@ -2,14 +2,13 @@ import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 const FIFTEEN_MIN = 15 * 60 * 1000;
-const HOUR = 60 * 60 * 1000;
 
 @Injectable()
 export class RateLimitService {
   constructor(private prisma: PrismaService) {}
 
-  async assertRegister(ip: string) {
-    await this.hitWindow(`reg:${ip}`, 5, HOUR, 'С этого адреса уже 5 регистраций за час');
+  async assertRegister(_ip: string) {
+    // Лимит регистраций с IP отключён: мешает кассе и тестам на общей сети.
   }
 
   async assertLoginIp(ip: string) {

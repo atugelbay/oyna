@@ -6,6 +6,8 @@ import {
   ArrowLeft, Share2, Trophy, Calendar, MapPin, Users, ChevronRight,
 } from 'lucide-react';
 import api from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
+import { tournamentRules } from '@/lib/tournament-rules';
 
 const STATUS_LABEL: Record<string, string> = {
   UPCOMING: 'Скоро',
@@ -69,6 +71,8 @@ export default function TournamentDetailPage() {
   const router = useRouter();
   const params = useParams();
   const id = params.id as string;
+  const { lang } = useI18n();
+  const rules = tournamentRules(lang);
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [loading, setLoading] = useState(true);
@@ -166,6 +170,27 @@ export default function TournamentDetailPage() {
           <p className="text-sm text-gray-300 leading-relaxed">{tournament.description}</p>
         </div>
       )}
+
+      {/* Tournament rules (01.11) */}
+      <div className="px-4 mb-4">
+        <p className="text-sm font-semibold text-gray-400 mb-2">
+          {lang === 'kk' ? 'Турнир ережелері' : 'Правила турнира'}
+        </p>
+        <div className="space-y-3 rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          {rules.map((block) => (
+            <div key={block.title}>
+              <p className="text-sm font-semibold text-white mb-1.5">{block.title}</p>
+              <ul className="space-y-1.5">
+                {block.items.map((item) => (
+                  <li key={item} className="text-sm text-gray-300 leading-relaxed pl-3 relative before:content-['•'] before:absolute before:left-0 before:text-brand">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* My team (if participating) */}
       {tournament.myTeam && (

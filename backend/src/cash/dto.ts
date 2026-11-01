@@ -156,6 +156,11 @@ export class CatalogDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  priceWeekendTenge?: number;
+
+  @IsOptional()
+  @IsInt()
   minutes?: number;
 
   @IsOptional()

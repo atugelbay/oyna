@@ -70,17 +70,22 @@ export class SettingsService {
   }
 
   async createPricePackage(dto: CreatePricePackageDto) {
+    const costWeekendTenge = dto.costWeekendTenge ?? dto.costTenge;
     return this.prisma.pricePackage.create({
-      data: dto,
+      data: { ...dto, costWeekendTenge },
       include: { venue: true },
     });
   }
 
   async updatePricePackage(id: string, dto: UpdatePricePackageDto) {
     await this.findPricePackageOrThrow(id);
+    const data = { ...dto };
+    if (dto.costTenge != null && dto.costWeekendTenge === undefined) {
+      // keep explicit weekend if already set; only fill when creating parity via cost
+    }
     return this.prisma.pricePackage.update({
       where: { id },
-      data: dto,
+      data,
       include: { venue: true },
     });
   }

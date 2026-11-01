@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsInt, IsUUID, Min } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsInt, IsUUID, Min, IsOptional } from 'class-validator';
 
 export class CreatePricePackageDto {
   @ApiProperty({ example: 'uuid-of-venue' })
@@ -16,10 +16,14 @@ export class CreatePricePackageDto {
   @Min(1)
   minutes: number;
 
-  @ApiProperty({ example: 3000, description: 'Cost in tenge' })
+  @ApiProperty({ example: 3000, description: 'Weekday cost in tenge' })
   @IsInt()
   @Min(0)
   costTenge: number;
+
+  @ApiPropertyOptional({ example: 3500, description: 'Weekend cost in tenge' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  costWeekendTenge?: number;
 }
-
-
