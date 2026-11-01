@@ -11,6 +11,7 @@ export type EditPricePackage = {
   name: string;
   minutes: number;
   costTenge: number;
+  costWeekendTenge?: number | null;
 };
 
 interface EditPricePackageModalProps {
@@ -55,6 +56,7 @@ export function EditPricePackageModal({ isOpen, package: pkg, onClose, onSaved }
   const [mounted, setMounted] = useState(false);
   const [name, setName] = useState("");
   const [cost, setCost] = useState("");
+  const [costWeekend, setCostWeekend] = useState("");
   const [minutes, setMinutes] = useState(15);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +69,7 @@ export function EditPricePackageModal({ isOpen, package: pkg, onClose, onSaved }
     if (!isOpen || !pkg) return;
     setName(pkg.name);
     setCost(String(pkg.costTenge ?? ""));
+    setCostWeekend(String(pkg.costWeekendTenge ?? pkg.costTenge ?? ""));
     setMinutes(pkg.minutes);
     setError(null);
     setSubmitting(false);
@@ -79,13 +82,18 @@ export function EditPricePackageModal({ isOpen, package: pkg, onClose, onSaved }
 
     const trimmedName = String(name || "").trim();
     const costTenge = parseInt(String(cost || "").replace(/\D/g, ""), 10);
+    const costWeekendTenge = parseInt(String(costWeekend || "").replace(/\D/g, ""), 10);
 
     if (!trimmedName) {
       setError("Введите название пакета");
       return;
     }
     if (!Number.isFinite(costTenge) || costTenge < 0) {
-      setError("Введите стоимость пакета (тенге)");
+      setError("Введите цену в будни (тенге)");
+      return;
+    }
+    if (!Number.isFinite(costWeekendTenge) || costWeekendTenge < 0) {
+      setError("Введите цену в выходные (тенге)");
       return;
     }
     if (!Number.isFinite(minutes) || minutes < 1) {
@@ -99,6 +107,7 @@ export function EditPricePackageModal({ isOpen, package: pkg, onClose, onSaved }
         name: trimmedName,
         minutes,
         costTenge,
+        costWeekendTenge,
       })
       .then(() => {
         onSaved?.();
@@ -150,7 +159,8 @@ export function EditPricePackageModal({ isOpen, package: pkg, onClose, onSaved }
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <Input label="Наименование пакета" value={name} onChange={(e) => setName(e.target.value)} />
-              <Input label="Введите стоимость пакета" value={cost} onChange={(e) => setCost(e.target.value)} />
+              <Input label="Цена в будни, ₸" value={cost} onChange={(e) => setCost(e.target.value)} />
+              <Input label="Цена в выходные, ₸" value={costWeekend} onChange={(e) => setCostWeekend(e.target.value)} />
 
               <div>
                 <label className="mb-2 block text-sm text-text-secondary">Введите минуты</label>

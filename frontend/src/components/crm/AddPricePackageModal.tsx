@@ -48,6 +48,7 @@ export function AddPricePackageModal({ isOpen, onClose, onAdded }: AddPricePacka
   const [mounted, setMounted] = useState(false);
   const [name, setName] = useState("Стандарт");
   const [cost, setCost] = useState("");
+  const [costWeekend, setCostWeekend] = useState("");
   const [minutes, setMinutes] = useState(15);
   const [venueId, setVenueId] = useState<string | null>(null);
   const [loadingVenue, setLoadingVenue] = useState(false);
@@ -62,6 +63,7 @@ export function AddPricePackageModal({ isOpen, onClose, onAdded }: AddPricePacka
     if (!isOpen) return;
     setName("Стандарт");
     setCost("");
+    setCostWeekend("");
     setMinutes(15);
     setError(null);
     setSubmitting(false);
@@ -91,13 +93,21 @@ export function AddPricePackageModal({ isOpen, onClose, onAdded }: AddPricePacka
 
     const trimmedName = String(name || "").trim();
     const costTenge = parseInt(String(cost || "").replace(/\D/g, ""), 10);
+    const weekendRaw = String(costWeekend || "").replace(/\D/g, "");
+    const costWeekendTenge = weekendRaw
+      ? parseInt(weekendRaw, 10)
+      : costTenge;
 
     if (!trimmedName) {
       setError("Введите название пакета");
       return;
     }
     if (!Number.isFinite(costTenge) || costTenge < 0) {
-      setError("Введите стоимость пакета (тенге)");
+      setError("Введите цену в будни (тенге)");
+      return;
+    }
+    if (!Number.isFinite(costWeekendTenge) || costWeekendTenge < 0) {
+      setError("Введите цену в выходные (тенге)");
       return;
     }
     if (!Number.isFinite(minutes) || minutes < 1) {
@@ -116,6 +126,7 @@ export function AddPricePackageModal({ isOpen, onClose, onAdded }: AddPricePacka
         name: trimmedName,
         minutes,
         costTenge,
+        costWeekendTenge,
       })
       .then(() => {
         onAdded?.();
@@ -167,7 +178,13 @@ export function AddPricePackageModal({ isOpen, onClose, onAdded }: AddPricePacka
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <Input label="Наименование пакета" value={name} onChange={(e) => setName(e.target.value)} />
-              <Input label="Введите стоимость пакета" value={cost} onChange={(e) => setCost(e.target.value)} />
+              <Input label="Цена в будни, ₸" value={cost} onChange={(e) => setCost(e.target.value)} />
+              <Input
+                label="Цена в выходные, ₸"
+                value={costWeekend}
+                onChange={(e) => setCostWeekend(e.target.value)}
+                placeholder="Как в будни, если пусто"
+              />
 
               <div>
                 <label className="mb-2 block text-sm text-text-secondary">Введите минуты</label>

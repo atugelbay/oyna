@@ -7,7 +7,13 @@ import { settingsService } from "@/services/settings.service";
 import { readApiUserError } from "@/lib/api-error-message";
 import { useConfirmDelete } from "@/components/ui/ConfirmDeleteModal";
 
-type PricePackage = { id: string; name: string; minutes: number; costTenge: number };
+type PricePackage = {
+  id: string;
+  name: string;
+  minutes: number;
+  costTenge: number;
+  costWeekendTenge?: number | null;
+};
 
 function formatCost(value: number) {
   return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
@@ -93,8 +99,9 @@ export default function SettingsPricesPage() {
           <thead>
             <tr className="border-b border-surface-border text-left text-text-secondary">
               <th className="py-3 px-4 font-medium">Наименование пакета</th>
-              <th className="py-3 px-4 font-medium">Количество минут</th>
-              <th className="py-3 px-4 font-medium">Стоимость</th>
+              <th className="py-3 px-4 font-medium">Минуты</th>
+              <th className="py-3 px-4 font-medium">Будни</th>
+              <th className="py-3 px-4 font-medium">Выходные</th>
               <th className="py-3 px-4 w-40 text-right font-medium">Действия</th>
             </tr>
           </thead>
@@ -102,8 +109,11 @@ export default function SettingsPricesPage() {
             {packages.map((p) => (
               <tr key={p.id} className="border-b border-surface-border/50 last:border-0 hover:bg-bg-card/30">
                 <td className="py-3 px-4 text-text-primary">{p.name}</td>
-                <td className="py-3 px-4 text-text-primary">{p.minutes} минут</td>
-                <td className="py-3 px-4 text-text-primary">{formatCost(p.costTenge)}</td>
+                <td className="py-3 px-4 text-text-primary">{p.minutes} мин</td>
+                <td className="py-3 px-4 text-text-primary">{formatCost(p.costTenge)} ₸</td>
+                <td className="py-3 px-4 text-text-primary">
+                  {formatCost(p.costWeekendTenge ?? p.costTenge)} ₸
+                </td>
                 <td className="py-3 px-4 text-right">
                   <div className="flex justify-end gap-2 whitespace-nowrap">
                     <button

@@ -405,11 +405,56 @@ export class CashService {
     return out;
   }
 
-  catalog(venueId?: string) {
+  async catalog(venueId?: string) {
+    if (venueId) {
+      await this.ensureWater(venueId);
+      await this.ensurePackagesFromPrices(venueId);
+    }
     return this.prisma.catalogItem.findMany({
       where: { active: true, ...(venueId ? { OR: [{ venueId }, { venueId: null }] } : {}) },
-      orderBy: { name: 'asc' },
+      orderBy: [{ category: 'asc' }, { name: 'asc' }],
     });
+  }
+
+  /** Подтягивает тарифы из прайса в кассовый справочник, чтобы на кассе были все минуты, не только вода. */
+  private async ensurePackagesFromPrices(venueId: string) {
+    const packages = await this.prisma.pricePackage.findMany({ where: { venueId } });
+    for (const pkg of packages) {
+      const name = pkg.name?.trim() || `${pkg.minutes} мин`;
+      const weekend = pkg.costWeekendTenge ?? pkg.costTenge;
+      const existing = await this.prisma.catalogItem.findFirst({
+        where: { venueId, name, category: 'GAMES' },
+      });
+      if (existing) {
+        if (
+          existing.priceTenge !== pkg.costTenge ||
+          existing.priceWeekendTenge !== weekend ||
+          existing.minutes !== pkg.minutes
+        ) {
+          await this.prisma.catalogItem.update({
+            where: { id: existing.id },
+            data: {
+              priceTenge: pkg.costTenge,
+              priceWeekendTenge: weekend,
+              minutes: pkg.minutes,
+              active: true,
+            },
+          });
+        }
+        continue;
+      }
+      await this.prisma.catalogItem.create({
+        data: {
+          venueId,
+          name,
+          category: 'GAMES',
+          priceTenge: pkg.costTenge,
+          priceWeekendTenge: weekend,
+          minutes: pkg.minutes,
+          active: true,
+        },
+      });
+    }
   }
 
   createItem(dto: CatalogDto) {

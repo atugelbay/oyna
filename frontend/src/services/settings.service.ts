@@ -14,6 +14,7 @@ export const settingsService = {
     name: string;
     minutes: number;
     costTenge: number;
+    costWeekendTenge?: number;
   }) {
     const { data } = await api.post("/settings/price-packages", payload);
     return data;
@@ -21,7 +22,12 @@ export const settingsService = {
 
   async updatePricePackage(
     id: string,
-    payload: { name?: string; minutes?: number; costTenge?: number },
+    payload: {
+      name?: string;
+      minutes?: number;
+      costTenge?: number;
+      costWeekendTenge?: number;
+    },
   ) {
     const { data } = await api.patch(`/settings/price-packages/${id}`, payload);
     return data;
