@@ -85,6 +85,14 @@ export default function BookingsPage() {
     load().catch((e) => setError(e?.response?.data?.message || "Не загрузилось"));
   }, [selectedVenueId]);
 
+  // С главной «Новая бронь» → /bookings?new=1: сразу к полю даты
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") !== "1") return;
+    const field = document.getElementById("booking-starts-at") as HTMLInputElement | null;
+    field?.scrollIntoView({ behavior: "smooth", block: "center" });
+    field?.focus();
+  }, []);
+
   function pickBirthdayPackage(name: string) {
     const pkg = BIRTHDAY_PACKAGES.find((p) => p.name === name);
     if (!pkg) return;
@@ -204,6 +212,7 @@ export default function BookingsPage() {
           <label className="text-sm">
             День и время
             <input
+              id="booking-starts-at"
               type="datetime-local"
               value={form.startsAt}
               onChange={(e) => setForm({ ...form, startsAt: e.target.value })}

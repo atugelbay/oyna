@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useCrmVenue } from "@/lib/venue-context";
@@ -245,6 +245,36 @@ export default function CashPage() {
     }, 280);
     return () => window.clearTimeout(t);
   }, [bookingQ, selectedVenueId, shift?.id]);
+
+  // Переход с главной или из карточки: /cash?player=<id> или /cash?booking=<id>
+  const prefillDone = useRef(false);
+  useEffect(() => {
+    if (prefillDone.current || !shift?.id || !selectedVenueId) return;
+    prefillDone.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const playerId = params.get("player");
+    const bookingId = params.get("booking");
+    if (playerId) {
+      api
+        .get(`/users/${playerId}`)
+        .then(({ data }) =>
+          addPlayer({ id: String(data.id), nickname: String(data.nickname ?? data.name ?? "Игрок"), phone: data.phone }),
+        )
+        .catch(() => setError("Игрок не найден"));
+    }
+    if (bookingId) {
+      api
+        .get("/cash/bookings", { params: { venueId: selectedVenueId } })
+        .then(({ data }) => {
+          const found = (Array.isArray(data) ? data : []).find((b: CashBooking) => b.id === bookingId);
+          if (found) addBooking(found);
+          else setError("По этой брони нечего оплачивать");
+        })
+        .catch(() => setError("Бронь не загрузилась"));
+    }
+    if (playerId || bookingId) window.history.replaceState(null, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shift?.id, selectedVenueId]);
 
   function resetSale() {
     setCart([]);

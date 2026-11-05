@@ -10,6 +10,14 @@ export default function SessionsLogPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
+  const [onlyInterrupted, setOnlyInterrupted] = useState(false);
+
+  // С главной «Компенсация» → /sessions-log?filter=interrupted
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("filter") === "interrupted") setOnlyInterrupted(true);
+  }, []);
+
+  const visible = onlyInterrupted ? rows.filter((r) => r.outcome === "INTERRUPTED") : rows;
 
   function load() {
     api.get("/sessions-journal", { params: { venueId: selectedVenueId || undefined } })
@@ -54,8 +62,13 @@ export default function SessionsLogPage() {
         <button type="button" onClick={download} className="min-h-11 rounded-xl bg-bg-secondary px-3 text-sm">Скачать Excel</button>
       </div>
       <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Причина компенсации, если игра сорвалась" className="min-h-12 w-full rounded-xl bg-bg-secondary px-3 text-base" />
+      <label className="flex min-h-11 items-center gap-2 text-sm">
+        <input type="checkbox" checked={onlyInterrupted} onChange={(e) => setOnlyInterrupted(e.target.checked)} className="h-5 w-5" />
+        Только прерванные
+      </label>
       {error && <p className="text-sm text-red-400">{error}</p>}
-      {rows.map((row) => (
+      {onlyInterrupted && visible.length === 0 ? <p className="text-sm text-text-secondary">Прерванных сеансов нет</p> : null}
+      {visible.map((row) => (
         <article key={row.id} className="rounded-xl bg-bg-secondary p-3 text-sm">
           <p className="font-semibold">{row.room} · {row.mode}</p>
           <p>{row.start ? new Date(row.start).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" }) : "—"}{row.end ? ` – ${new Date(row.end).toLocaleTimeString("ru-RU", { timeZone: "Asia/Almaty" })}` : ""}</p>

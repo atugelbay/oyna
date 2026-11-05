@@ -21,6 +21,7 @@ import { RatingModule } from './rating/rating.module';
 import { CashModule } from './cash/cash.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { OpsModule } from './ops/ops.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { OpsModule } from './ops/ops.module';
     CashModule,
     LoyaltyModule,
     OpsModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

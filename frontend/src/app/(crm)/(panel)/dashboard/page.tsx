@@ -1,458 +1,520 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import axios from "axios";
+import { useRouter } from "next/navigation";
+import { ChevronDown, ChevronRight, Phone } from "lucide-react";
+import api from "@/lib/api";
 import { statsService } from "@/services/stats.service";
-import { gameSessionsService } from "@/services/game-sessions.service";
-import {
-  ChevronRight,
-  CirclePlus,
-  CircleStop,
-  Pause,
-  Play,
-  Plus,
-  Square,
-  UserRound,
-} from "lucide-react";
-import { Paper } from "@mui/material";
-import { createPortal } from "react-dom";
-import { Input, Button } from "@/components/ui";
 import { AddPlayerModal } from "@/components/crm/AddPlayerModal";
-import { GuestSaleModal } from "@/components/crm/GuestSaleModal";
-import { LaunchRoomModal } from "@/components/crm/LaunchRoomModal";
-import { PlayerProfileModal } from "@/components/crm/PlayerProfileModal";
 import { readApiUserError } from "@/lib/api-error-message";
-import { playersService } from "@/services/players.service";
+import { useAuth } from "@/lib/auth-context";
 import { useCrmVenue } from "@/lib/venue-context";
-import { UpcomingBookings } from "@/components/crm/UpcomingBookings";
+import { bookingStatusLabel } from "@/lib/crm-labels";
+import { formatTenge } from "@/lib/money";
 
 const CHART_COLORS = ["#36D399", "#7AA2FF", "#A78BFA", "#F59E0B", "#FB7185"];
-const dashboardContainerFill = "#19232E";
+const panel = "rounded-2xl bg-[#19232E] p-4 sm:p-5";
+const row = "rounded-xl bg-[#141C26] px-4 py-3";
 
-type DashboardRoom = {
+type TodayBooking = {
   id: string;
-  name: string;
-  /** true = virtual/mock (CRM может activate). false = зал: старт на HUD */
-  useDevCommands?: boolean;
-  status: "free" | "occupied" | "waiting";
-  playerNickname?: string;
-  waitingPlayerNicknames?: string[];
-  pendingSessionId?: string;
-  pendingSessionToken?: string;
-  sessionPlayerNicknames?: string[];
-  sessionPlayerUserIds?: string[];
-  activeSessionId?: string;
-  sessionStartTime?: string;
-  levelDurationSeconds?: number;
-  pausedAt?: string;
+  startsAt: string;
+  type: "BIRTHDAY" | "TEAMBUILDING";
+  packageName: string;
+  people: number;
+  contactName: string;
+  contactPhone: string;
+  amountTenge: number;
+  paidTenge: number;
+  remainingTenge: number;
+  due: { kind: "PREPAY" | "REST" | "PAID"; label: string; amount: number };
+  status: string;
+  soon: boolean;
 };
 
-/** ID и строки из API (иногда не string в промежуточных слоях) */
-function asNonEmptyString(v: unknown): string | undefined {
-  if (v == null) return undefined;
-  const s = String(v).trim();
-  return s.length ? s : undefined;
-}
+type TodayRoom = {
+  roomId: string;
+  name: string;
+  status: "FREE" | "BUSY" | "OFFLINE";
+  remainingSeconds: number | null;
+  paused: boolean;
+  players: number;
+  playerNicknames: string[];
+};
 
-function pickStr(o: Record<string, unknown>, a: string, b: string): string | undefined {
-  return asNonEmptyString(o[a]) ?? asNonEmptyString(o[b]);
-}
-
-function pickNum(o: Record<string, unknown>, a: string, b: string): number | undefined {
-  const tryVal = (v: unknown): number | undefined => {
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string" && v.trim() !== "") {
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-    return undefined;
+type Today = {
+  shift: { id: string; number: number; openedAt: string; operatorName: string } | null;
+  bookings: TodayBooking[];
+  tomorrowBookings: number;
+  rooms: TodayRoom[];
+  important: {
+    birthdays: { userId: string; nickname: string; age: number }[];
+    expiringMinutes: { userId: string; nickname: string; phone: string; minutes: number; expiresAt: string }[];
+    offlineRooms: { roomId: string; name: string; minutes: number }[];
+    lowStock: { id: string; name: string; stockQty: number; lowStockAt: number }[];
+    tournament: { daysLeft: number; leader: { nickname: string; points: number } | null };
   };
-  return tryVal(o[a]) ?? tryVal(o[b]);
-}
+  numbers: { scope: "DAY" | "MY_SHIFT"; sales: number; revenue: number };
+};
 
-function pickStrArray(o: Record<string, unknown>, a: string, b: string): string[] | undefined {
-  const x = o[a];
-  const y = o[b];
-  const arr = (Array.isArray(x) ? x : Array.isArray(y) ? y : null) as unknown[] | null;
-  if (!arr) return undefined;
-  const out = arr
-    .map((v) => {
-      if (typeof v === "string" || typeof v === "number") return String(v).trim();
-      if (v && typeof v === "object" && "nickname" in v) return asNonEmptyString((v as { nickname?: unknown }).nickname);
-      return "";
-    })
-    .filter(Boolean) as string[];
-  return out.length ? out : undefined;
-}
-
-/** Нормализация ответа API (camelCase / snake_case) и гарантированные id для кнопок */
-function normalizeDashboardRoom(raw: unknown): DashboardRoom {
-  const r = raw as Record<string, unknown>;
-  const status = r.status as DashboardRoom["status"];
-  const id = String(r.id ?? "");
-  const name = String(r.name ?? "");
-  const base: DashboardRoom = {
-    id,
-    name,
-    useDevCommands: Boolean(r.useDevCommands ?? r.use_dev_commands),
-    status: status === "free" || status === "occupied" || status === "waiting" ? status : "free",
-    playerNickname: pickStr(r, "playerNickname", "player_nickname"),
-    waitingPlayerNicknames: pickStrArray(r, "waitingPlayerNicknames", "waiting_player_nicknames") as
-      | string[]
-      | undefined,
-    pendingSessionId: pickStr(r, "pendingSessionId", "pending_session_id"),
-    pendingSessionToken: pickStr(r, "pendingSessionToken", "pending_session_token"),
-    sessionPlayerNicknames: pickStrArray(r, "sessionPlayerNicknames", "session_player_nicknames") as
-      | string[]
-      | undefined,
-    sessionPlayerUserIds: pickStrArray(r, "sessionPlayerUserIds", "session_player_user_ids") as
-      | string[]
-      | undefined,
-    activeSessionId: pickStr(r, "activeSessionId", "active_session_id"),
-    sessionStartTime: pickStr(r, "sessionStartTime", "session_start_time"),
-    levelDurationSeconds: pickNum(r, "levelDurationSeconds", "level_duration_seconds"),
-    pausedAt: pickStr(r, "pausedAt", "paused_at"),
-  };
-  return base;
-}
-
-/** Не даём полям со значением undefined затирать данные из другого слоя (например гидрация activeSessionId). */
-function omitUndefinedShallow<T extends object>(obj: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(obj as Record<string, unknown>).filter(([, v]) => v !== undefined),
-  ) as Partial<T>;
-}
-
-function isAxiosNotFound(e: unknown): boolean {
-  return axios.isAxiosError(e) && e.response?.status === 404;
-}
-
-type DashboardData = {
+type Stats = {
   sessionsByRoom: { name: string; count: number; roomId: string }[];
-  rooms: DashboardRoom[];
   totalSessions: number;
   totalPlayers: number;
   newPlayers: number;
 };
 
-const today = new Date();
-const dateStr = today.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+function time(iso: string) {
+  return new Date(iso).toLocaleTimeString("ru-RU", { timeZone: "Asia/Almaty", hour: "2-digit", minute: "2-digit" });
+}
+
+function mmss(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function plural(n: number, one: string, few: string, many: string) {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const isAdmin = user?.role?.toUpperCase() === "ADMIN";
   const { selectedVenueId } = useCrmVenue();
-  const [loading, setLoading] = useState(true);
+  const [today, setToday] = useState<Today | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [addPlayerOpen, setAddPlayerOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [profilePlayerId, setProfilePlayerId] = useState<string | null>(null);
-  const [profileInitialTopUpOpen, setProfileInitialTopUpOpen] = useState(false);
-  const [topUpOpen, setTopUpOpen] = useState(false);
-  const [guestSaleOpen, setGuestSaleOpen] = useState(false);
-  const [createTeamOpen, setCreateTeamOpen] = useState(false);
-  const [launchRoom, setLaunchRoom] = useState<{ id: string; name: string } | null>(null);
+  const [sellTo, setSellTo] = useState<string | null>(null);
+  const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  const [tomorrowOpen, setTomorrowOpen] = useState(false);
+  const [tomorrow, setTomorrow] = useState<any[] | null>(null);
 
-  const openPlayerProfile = useCallback((id: string, options?: { withTopUp?: boolean }) => {
-    setProfilePlayerId(id);
-    setProfileInitialTopUpOpen(!!options?.withTopUp);
-    setProfileOpen(true);
-  }, []);
-
-  const closePlayerProfile = useCallback(() => {
-    setProfileOpen(false);
-    setProfilePlayerId(null);
-    setProfileInitialTopUpOpen(false);
-  }, []);
-
-  const refreshDashboard = useCallback(() => {
-    statsService.getDashboard(selectedVenueId ?? undefined).then(setData).catch(() => {});
+  const load = useCallback(async () => {
+    if (!selectedVenueId) return;
+    try {
+      const [{ data }, s] = await Promise.all([
+        api.get("/dashboard/today", { params: { venueId: selectedVenueId } }),
+        statsService.getDashboard(selectedVenueId).catch(() => null),
+      ]);
+      setToday(data);
+      if (s) setStats(s);
+      setError(null);
+    } catch (e) {
+      setError(readApiUserError(e, "Не удалось загрузить главную"));
+    }
   }, [selectedVenueId]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    statsService
-      .getDashboard(selectedVenueId ?? undefined)
-      .then((d) => {
-        if (!cancelled) {
-          setData(d);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(readApiUserError(err, "Ошибка загрузки данных"));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedVenueId]);
+    void load();
+    const id = window.setInterval(() => {
+      if (!document.hidden) void load();
+    }, 10000);
+    return () => window.clearInterval(id);
+  }, [load]);
 
-  /** Живые статусы комнат: лобби / occupied / free без F5.
-   * Пока нет WS — короткий poll + refresh при возврате на вкладку. */
+  // Таймеры комнат тикают каждую секунду между обновлениями
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    const POLL_MS = 3000;
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  useEffect(() => setTick(0), [today]);
 
-    const tick = () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      refreshDashboard();
-    };
+  async function guestsArrived(bookingId: string) {
+    setBusyId(bookingId);
+    try {
+      await api.post(`/bookings/${bookingId}/status`, { status: "ARRIVED" });
+      await load();
+    } catch (e) {
+      setError(readApiUserError(e, "Статус не обновлён"));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
-    const onVisibility = () => {
-      if (!document.hidden) refreshDashboard();
-    };
+  async function toggleTomorrow() {
+    const next = !tomorrowOpen;
+    setTomorrowOpen(next);
+    if (next && tomorrow == null && selectedVenueId) {
+      const now = new Date();
+      const almaty = new Date(now.getTime() + 5 * 3600000);
+      const y = almaty.getUTCFullYear();
+      const m = almaty.getUTCMonth();
+      const d = almaty.getUTCDate();
+      const from = new Date(Date.UTC(y, m, d + 1) - 5 * 3600000).toISOString();
+      const to = new Date(Date.UTC(y, m, d + 2) - 5 * 3600000 - 1).toISOString();
+      api
+        .get("/bookings", { params: { venueId: selectedVenueId, from, to } })
+        .then(({ data }) =>
+          setTomorrow(
+            (Array.isArray(data) ? data : []).filter((b: any) => b.status !== "CANCELLED" && b.status !== "NO_SHOW"),
+          ),
+        )
+        .catch(() => setTomorrow([]));
+    }
+  }
 
-    const id = window.setInterval(tick, POLL_MS);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [refreshDashboard]);
-
-  if (loading) return <DashboardSkeleton />;
-
-  if (error) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">За сегодня</h1>
-          <p className="text-text-secondary mt-1 text-sm">{dateStr}</p>
-        </div>
-        <div className="rounded-xl p-6" style={{ backgroundColor: dashboardContainerFill }}>
-          <p className="text-danger font-medium">{error}</p>
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              setLoading(true);
-              statsService
-                .getDashboard(selectedVenueId ?? undefined)
-                .then(setData)
-                .catch((err) => setError(readApiUserError(err, "Ошибка загрузки данных")))
-                .finally(() => setLoading(false));
-            }}
-            className="mt-3 text-sm text-cyan hover:underline"
-          >
-            Повторить
-          </button>
-        </div>
+  if (!selectedVenueId) {
+    return <p className="text-text-secondary">Выберите игровую точку</p>;
+  }
+  if (!today) {
+    return error ? (
+      <div className={panel}>
+        <p className="text-danger">{error}</p>
+        <button type="button" onClick={() => void load()} className="mt-3 text-sm text-cyan hover:underline">
+          Повторить
+        </button>
+      </div>
+    ) : (
+      <div className="space-y-4 animate-pulse">
+        <div className="h-12 rounded-xl bg-bg-card" />
+        <div className="h-16 rounded-xl bg-bg-card" />
+        <div className="h-48 rounded-xl bg-bg-card" />
       </div>
     );
   }
 
-  const sessionsByRoom = (data?.sessionsByRoom ?? []).map((r, i) => ({
-    ...r,
-    color: CHART_COLORS[i % CHART_COLORS.length],
-  }));
+  const { shift, bookings, important, numbers } = today;
+  const sessionsByRoom = (stats?.sessionsByRoom ?? []).map((r, i) => ({ ...r, color: CHART_COLORS[i % CHART_COLORS.length] }));
   const totalChart = sessionsByRoom.reduce((s, r) => s + r.count, 0);
-  const totalSessionsCount = data?.totalSessions ?? 0;
-  const hasSessionStats = totalSessionsCount > 0 || totalChart > 0;
-  const rooms = (data?.rooms ?? []).map(normalizeDashboardRoom);
+  const freeRooms = today.rooms.filter((r) => r.status === "FREE");
+  const hasImportant =
+    important.birthdays.length > 0 ||
+    important.expiringMinutes.length > 0 ||
+    important.offlineRooms.length > 0 ||
+    important.lowStock.length > 0 ||
+    important.tournament.leader != null;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">За сегодня</h1>
-        <p className="text-text-secondary mt-1 text-sm">{dateStr}</p>
-      </div>
-      <UpcomingBookings />
+    <div className="space-y-4 text-text-primary">
+      {/* Состояние смены */}
+      {shift ? (
+        <div className="rounded-xl bg-white/5 px-4 py-3 text-sm text-text-secondary">
+          Смена №{shift.number} открыта · {shift.operatorName} · с {time(shift.openedAt)}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-500/15 px-4 py-3">
+          <span className="font-semibold text-red-300">Смена не открыта — продажи невозможны</span>
+          <Link href="/cash" className="min-h-11 rounded-xl bg-red-500 px-4 py-2.5 text-sm font-semibold text-white">
+            Открыть смену
+          </Link>
+        </div>
+      )}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-7 flex flex-col gap-6 w-full min-w-0">
-          <Paper className="w-full min-w-0 rounded-2xl p-5 h-fit" sx={{ backgroundColor: dashboardContainerFill }}>
-            <h2 className="text-sm font-medium text-text-secondary mb-4">Количество сессий</h2>
-            {hasSessionStats ? (
-              <div className="flex flex-wrap items-center gap-5">
-                <span className="text-5xl font-black text-white tabular-nums shrink-0">{totalSessionsCount}</span>
-                <DonutChart data={sessionsByRoom} total={totalChart} size={80} />
-                <div className="flex flex-wrap gap-x-5 gap-y-1.5 min-w-0">
-                  {sessionsByRoom.map((r) => (
-                    <div
-                      key={r.roomId ?? r.name}
-                      className="flex items-center gap-1.5 text-xs text-[#D5E6F7] whitespace-nowrap"
-                    >
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
-                      <span>
-                        {r.name}: <b>{r.count}</b>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+      {/* Быстрые кнопки */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <QuickButton label="Продажа" href="/cash" primary />
+        <QuickButton label="Новый игрок" onClick={() => setAddPlayerOpen(true)} />
+        <QuickButton label="Запустить комнату" onClick={() => setRoomPickerOpen(true)} />
+        <QuickButton label="Новая бронь" href="/bookings?new=1" />
+        <QuickButton label="Компенсация" href="/sessions-log?filter=interrupted" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <div className="space-y-4 lg:col-span-7">
+          {/* Брони сегодня */}
+          <section className={panel}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Брони сегодня</h2>
+              <Link href="/bookings" className="text-xs text-cyan">
+                Все брони
+              </Link>
+            </div>
+            {bookings.length === 0 ? (
+              <p className="text-sm text-text-secondary">Сегодня броней нет</p>
             ) : (
-              <div className="flex flex-wrap items-center gap-5 sm:gap-6">
-                <span className="shrink-0 text-5xl font-black tabular-nums text-white">0</span>
-                <DonutChart data={[]} total={0} size={80} />
-                <div className="min-w-0">
-                  <p className="text-base font-semibold leading-snug text-white">Сегодня сессий нет.</p>
-                  <p className="mt-1 text-sm leading-snug text-text-secondary">Они появятся здесь по каждой комнате</p>
-                </div>
+              <div className="space-y-2">
+                {bookings.map((b) => (
+                  <article
+                    key={b.id}
+                    className={`${row} ${b.soon && b.status !== "ARRIVED" ? "ring-2 ring-amber-400" : ""}`}
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="font-semibold">
+                        <span className="tabular-nums">{time(b.startsAt)}</span> · {b.packageName} · {b.people}{" "}
+                        {plural(b.people, "гость", "гостя", "гостей")}
+                      </p>
+                      <span className="text-xs text-text-secondary">{bookingStatusLabel(b.status)}</span>
+                    </div>
+                    <p className="text-sm text-text-secondary">
+                      {b.contactName} · {b.contactPhone}
+                    </p>
+                    <p className="text-sm">
+                      Предоплата {formatTenge(b.paidTenge)} · остаток{" "}
+                      <b className={b.remainingTenge > 0 ? "text-amber-300" : "text-success"}>{formatTenge(b.remainingTenge)}</b>
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {b.status !== "ARRIVED" && b.status !== "COMPLETED" ? (
+                        <button
+                          type="button"
+                          disabled={busyId === b.id}
+                          onClick={() => void guestsArrived(b.id)}
+                          className="min-h-10 rounded-lg bg-cyan px-3 text-sm font-medium text-black disabled:opacity-50"
+                        >
+                          Гости пришли
+                        </button>
+                      ) : null}
+                      {b.remainingTenge > 0 ? (
+                        <Link href={`/cash?booking=${b.id}`} className="inline-flex min-h-10 items-center rounded-lg bg-bg-card px-3 text-sm">
+                          {b.due.kind === "PREPAY" ? "Принять предоплату" : "Принять доплату"}
+                        </Link>
+                      ) : null}
+                      <a
+                        href={`tel:${b.contactPhone.replace(/[^\d+]/g, "")}`}
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-bg-card px-3 text-sm"
+                      >
+                        <Phone className="h-4 w-4" /> Позвонить
+                      </a>
+                    </div>
+                  </article>
+                ))}
               </div>
             )}
-          </Paper>
+            {today.tomorrowBookings > 0 ? (
+              <div className="mt-3">
+                <button type="button" onClick={() => void toggleTomorrow()} className="flex items-center gap-1 text-sm text-text-secondary">
+                  {tomorrowOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  Завтра: {today.tomorrowBookings} {plural(today.tomorrowBookings, "бронь", "брони", "броней")}
+                </button>
+                {tomorrowOpen ? (
+                  <div className="mt-2 space-y-1 text-sm">
+                    {tomorrow == null ? (
+                      <p className="text-text-secondary">Загрузка…</p>
+                    ) : (
+                      tomorrow.map((b) => (
+                        <p key={b.id}>
+                          {time(b.startsAt)} · {b.packageName} · {b.people} чел · {b.contactName}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
 
-          <Paper className="w-full min-w-0 rounded-2xl p-6 h-fit" sx={{ backgroundColor: dashboardContainerFill }}>
-            <h2 className="text-sm font-medium text-white mb-4">Статусы комнат в данный момент</h2>
-            <div className="flex flex-col gap-2">
-              {rooms.map((room) => (
-                <RoomStatusRow
-                  key={room.id}
-                  room={room}
-                  onLaunch={(r) => setLaunchRoom(r)}
-                  onSessionsChange={refreshDashboard}
-                />
-              ))}
+          {/* Комнаты сейчас */}
+          <section className={panel}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Комнаты сейчас</h2>
+              <Link href="/live" className="text-xs text-cyan">
+                В зал
+              </Link>
             </div>
-          </Paper>
+            <div className="grid grid-cols-2 gap-2">
+              {today.rooms.map((r) => {
+                const left = r.remainingSeconds != null ? Math.max(0, r.remainingSeconds - (r.paused ? 0 : tick)) : null;
+                return (
+                  <Link
+                    key={r.roomId}
+                    href="/live"
+                    className={`${row} block hover:bg-white/5 ${r.status === "OFFLINE" ? "ring-1 ring-danger/60" : ""}`}
+                  >
+                    <p className="font-semibold">{r.name}</p>
+                    <p
+                      className={`text-sm ${
+                        r.status === "FREE" ? "text-success" : r.status === "OFFLINE" ? "text-danger" : "text-cyan"
+                      }`}
+                    >
+                      {r.status === "FREE"
+                        ? "Свободна"
+                        : r.status === "OFFLINE"
+                          ? "Нет связи"
+                          : `Идёт игра${left != null ? ` · ${mmss(left)} осталось` : ""}${r.paused ? " · пауза" : ""}`}
+                    </p>
+                    {r.status === "BUSY" ? (
+                      <p className="text-xs text-text-secondary">
+                        {r.players} {plural(r.players, "игрок", "игрока", "игроков")}
+                      </p>
+                    ) : null}
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
         </div>
 
-        <div className="lg:col-span-5 flex flex-col gap-6 w-full min-w-0">
-          <div className="flex flex-wrap items-center gap-6 w-full min-w-0">
-            <Paper className="min-w-0 flex-1 basis-[140px] max-lg:flex-none max-lg:w-full rounded-2xl p-4 flex flex-row items-center gap-3" sx={{ backgroundColor: dashboardContainerFill }}>
-              <UserRound className="w-5 h-5 text-[#AFC7DA] shrink-0" strokeWidth={1.75} />
-              <div className="flex flex-col items-start gap-0.5 min-w-0">
-                <span className="text-xs text-[#AFC7DA] leading-tight">Посетившие игроки</span>
-                <span className="text-3xl font-bold text-white tabular-nums leading-none">
-                  {data?.totalPlayers ?? 0}
-                </span>
+        <div className="space-y-4 lg:col-span-5">
+          {/* Важное сегодня */}
+          {hasImportant ? (
+            <section className={panel}>
+              <h2 className="mb-3 text-base font-semibold">Важное сегодня</h2>
+              <ul className="space-y-2 text-sm">
+                {important.offlineRooms.map((r) => (
+                  <li key={r.roomId} className={`${row} text-danger`}>
+                    {r.name}: нет связи {r.minutes} мин
+                  </li>
+                ))}
+                {important.birthdays.length > 0 ? (
+                  <li className={row}>
+                    🎂 День рождения: {important.birthdays.map((b) => `${b.nickname} (${b.age})`).join(", ")}
+                  </li>
+                ) : null}
+                {important.expiringMinutes.length > 0 ? (
+                  <li className={row}>
+                    <p className="mb-1">Сгорают сегодня — напомните:</p>
+                    {important.expiringMinutes.slice(0, 8).map((e) => (
+                      <p key={e.userId} className="text-text-secondary">
+                        {e.nickname} · {e.minutes} мин до {time(e.expiresAt)}
+                      </p>
+                    ))}
+                  </li>
+                ) : null}
+                {important.lowStock.map((i) => (
+                  <li key={i.id} className={`${row} text-amber-300`}>
+                    {i.name}: осталось {i.stockQty} шт. (порог {i.lowStockAt})
+                  </li>
+                ))}
+                {important.tournament.leader ? (
+                  <li className={row}>
+                    Турнир месяца: до конца {important.tournament.daysLeft}{" "}
+                    {plural(important.tournament.daysLeft, "день", "дня", "дней")}, лидер{" "}
+                    <b>{important.tournament.leader.nickname}</b> ({important.tournament.leader.points})
+                  </li>
+                ) : null}
+              </ul>
+            </section>
+          ) : null}
+
+          {/* Цифры дня */}
+          <section className={panel}>
+            <h2 className="mb-3 text-base font-semibold">Цифры дня</h2>
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <p className="text-xs text-text-secondary">Сеансов</p>
+                <p className="text-3xl font-bold tabular-nums">{stats?.totalSessions ?? 0}</p>
               </div>
-            </Paper>
-
-            <Paper className="min-w-0 flex-1 basis-[140px] max-lg:flex-none max-lg:w-full rounded-2xl p-4 flex flex-row items-center gap-3" sx={{ backgroundColor: dashboardContainerFill }}>
-              <UserRound className="w-5 h-5 text-[#AFC7DA] shrink-0" strokeWidth={1.75} />
-              <div className="flex flex-col items-start gap-0.5 min-w-0">
-                <span className="text-xs text-[#AFC7DA] leading-tight">Новые игроки</span>
-                <span className="text-3xl font-bold text-white tabular-nums leading-none">
-                  +{data?.newPlayers ?? 0}
-                </span>
+              <DonutChart data={sessionsByRoom} total={totalChart} />
+              <div className="flex flex-col gap-1 text-xs text-[#D5E6F7]">
+                {sessionsByRoom.map((r) => (
+                  <span key={r.roomId ?? r.name} className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: r.color }} />
+                    {r.name}: <b>{r.count}</b>
+                  </span>
+                ))}
               </div>
-            </Paper>
-
-            <Link
-              href="/players"
-              className="shrink-0 flex h-12 items-center gap-3 pl-1 max-lg:h-auto max-lg:min-h-12 max-lg:w-full max-lg:justify-start text-cyan hover:opacity-90 transition-opacity"
-            >
-              <span className="text-sm font-medium whitespace-nowrap">К таблице игроков</span>
-              <span className="flex items-center justify-center w-11 h-11 rounded-full shrink-0" style={{ backgroundColor: dashboardContainerFill }}>
-                <ChevronRight className="w-5 h-5 text-[#EAF6FF]" strokeWidth={2} />
-              </span>
-            </Link>
-          </div>
-
-          <Paper className="w-full min-w-0 rounded-2xl p-6 h-fit" sx={{ backgroundColor: dashboardContainerFill }}>
-            <h2 className="text-sm font-medium text-white mb-4">Быстрое добавление в справочник</h2>
-            <div className="flex flex-col gap-2">
-              <QuickActionCard title="Добавить нового игрока" onClick={() => setAddPlayerOpen(true)} />
-              <QuickActionCard title="Пополнить минуты" onClick={() => setTopUpOpen(true)} />
-              <QuickActionCard title="Гостевая оплата" onClick={() => setGuestSaleOpen(true)} />
-              <QuickActionCard title="Создать команду" onClick={() => setCreateTeamOpen(true)} />
             </div>
-          </Paper>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+              <div className={row}>
+                <p className="text-xs text-text-secondary">Посетители</p>
+                <p className="text-xl font-bold tabular-nums">{stats?.totalPlayers ?? 0}</p>
+              </div>
+              <div className={row}>
+                <p className="text-xs text-text-secondary">Новые игроки</p>
+                <p className="text-xl font-bold tabular-nums">+{stats?.newPlayers ?? 0}</p>
+              </div>
+              <div className={`${row} col-span-2`}>
+                <p className="text-xs text-text-secondary">
+                  {numbers.scope === "DAY" ? "Выручка дня" : "Мои продажи за смену"}
+                </p>
+                <p className="text-xl font-bold tabular-nums">
+                  {formatTenge(numbers.revenue)}{" "}
+                  <span className="text-sm font-normal text-text-secondary">
+                    · {numbers.sales} {plural(numbers.sales, "продажа", "продажи", "продаж")}
+                  </span>
+                </p>
+              </div>
+            </div>
+            {isAdmin ? null : (
+              <p className="mt-2 text-xs text-text-muted">Выручку за день видит владелец</p>
+            )}
+          </section>
         </div>
       </div>
+
       <AddPlayerModal
         isOpen={addPlayerOpen}
         onClose={() => setAddPlayerOpen(false)}
         onAdded={(id) => {
-          openPlayerProfile(id);
-          refreshDashboard();
+          setAddPlayerOpen(false);
+          setSellTo(id);
         }}
       />
-      <PlayerProfileModal
-        playerId={profilePlayerId}
-        isOpen={profileOpen}
-        onClose={closePlayerProfile}
-        initialTopUpOpen={profileInitialTopUpOpen}
-      />
-      <QuickTopUpModal
-        isOpen={topUpOpen}
-        onClose={() => setTopUpOpen(false)}
-        onSelectPlayer={(id) => {
-          setTopUpOpen(false);
-          openPlayerProfile(id, { withTopUp: true });
-        }}
-      />
-      <GuestSaleModal
-        isOpen={guestSaleOpen}
-        onClose={() => setGuestSaleOpen(false)}
-        venueId={selectedVenueId}
-        onSuccess={refreshDashboard}
-      />
-      <QuickCreateTeamModal isOpen={createTeamOpen} onClose={() => setCreateTeamOpen(false)} />
-      <LaunchRoomModal
-        target={launchRoom}
-        isOpen={launchRoom !== null}
-        onClose={() => setLaunchRoom(null)}
-        onSessionStarted={refreshDashboard}
-      />
+
+      {sellTo ? (
+        <Dialog title="Игрок добавлен" onClose={() => setSellTo(null)}>
+          <p className="mt-2 text-sm text-text-secondary">Продать этому игроку?</p>
+          <div className="mt-5 flex gap-2">
+            <button type="button" className="min-h-12 flex-1 rounded-xl bg-bg-card" onClick={() => setSellTo(null)}>
+              Нет
+            </button>
+            <button
+              type="button"
+              className="min-h-12 flex-1 rounded-xl bg-cyan font-semibold text-black"
+              onClick={() => router.push(`/cash?player=${sellTo}`)}
+            >
+              Продать
+            </button>
+          </div>
+        </Dialog>
+      ) : null}
+
+      {roomPickerOpen ? (
+        <Dialog title="Какую комнату запустить?" onClose={() => setRoomPickerOpen(false)}>
+          {freeRooms.length === 0 ? (
+            <p className="mt-3 text-sm text-text-secondary">Свободных комнат нет</p>
+          ) : (
+            <div className="mt-3 grid gap-2">
+              {freeRooms.map((r) => (
+                <button
+                  key={r.roomId}
+                  type="button"
+                  onClick={() => router.push(`/live?launch=${r.roomId}`)}
+                  className="min-h-12 rounded-xl bg-bg-card px-4 text-left font-medium hover:bg-white/10"
+                >
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <button type="button" className="mt-4 min-h-11 w-full rounded-xl bg-bg-card" onClick={() => setRoomPickerOpen(false)}>
+            Закрыть
+          </button>
+        </Dialog>
+      ) : null}
     </div>
   );
 }
 
-function DashboardSkeleton() {
+function QuickButton({ label, href, onClick, primary }: { label: string; href?: string; onClick?: () => void; primary?: boolean }) {
+  const cls = `flex min-h-14 items-center justify-center rounded-xl px-3 text-center text-sm font-semibold transition-opacity hover:opacity-90 ${
+    primary ? "bg-cyan text-black" : "bg-[#19232E] text-white"
+  }`;
+  if (href) {
+    return (
+      <Link href={href} className={cls}>
+        {label}
+      </Link>
+    );
+  }
   return (
-    <div className="space-y-6 animate-pulse">
-      <div>
-        <div className="h-8 w-32 bg-bg-card rounded" />
-        <div className="h-4 w-48 mt-2 bg-bg-card rounded" />
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-7 flex flex-col gap-6 w-full min-w-0">
-          <div className="w-full min-w-0 rounded-xl p-5 h-fit" style={{ backgroundColor: dashboardContainerFill }}>
-            <div className="h-5 w-40 mb-4 bg-bg-card rounded" />
-            <div className="flex flex-wrap items-center gap-5">
-              <div className="h-14 w-20 bg-bg-card rounded" />
-              <div className="w-[80px] h-[80px] rounded-full bg-bg-card shrink-0" />
-              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-3 w-28 bg-bg-card rounded" />
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="w-full min-w-0 rounded-xl p-6 h-fit" style={{ backgroundColor: dashboardContainerFill }}>
-            <div className="h-5 w-64 mb-4 bg-bg-card rounded" />
-            <div className="flex flex-col gap-2">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-12 rounded-xl bg-bg-card" />
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="lg:col-span-5 flex flex-col gap-6 w-full min-w-0">
-          <div className="flex flex-wrap items-center gap-6 w-full min-w-0">
-            <div className="min-w-0 flex-1 basis-[140px] max-lg:flex-none max-lg:w-full rounded-xl p-4 flex flex-row items-center gap-3" style={{ backgroundColor: dashboardContainerFill }}>
-              <div className="w-5 h-5 rounded bg-bg-card shrink-0" />
-              <div className="flex flex-col gap-1.5 min-w-0">
-                <div className="h-3 w-28 bg-bg-card rounded" />
-                <div className="h-8 w-14 bg-bg-card rounded" />
-              </div>
-            </div>
-            <div className="min-w-0 flex-1 basis-[140px] max-lg:flex-none max-lg:w-full rounded-xl p-4 flex flex-row items-center gap-3" style={{ backgroundColor: dashboardContainerFill }}>
-              <div className="w-5 h-5 rounded bg-bg-card shrink-0" />
-              <div className="flex flex-col gap-1.5 min-w-0">
-                <div className="h-3 w-24 bg-bg-card rounded" />
-                <div className="h-8 w-12 bg-bg-card rounded" />
-              </div>
-            </div>
-            <div className="shrink-0 flex h-12 items-center gap-3 pl-1 max-lg:h-auto max-lg:min-h-12 max-lg:w-full">
-              <div className="h-4 w-32 bg-bg-card rounded" />
-              <div className="w-11 h-11 rounded-full bg-bg-card shrink-0" />
-            </div>
-          </div>
-          <div className="w-full min-w-0 rounded-xl p-6 h-fit" style={{ backgroundColor: dashboardContainerFill }}>
-            <div className="h-5 w-64 mb-4 bg-bg-card rounded" />
-            <div className="flex flex-col gap-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-12 rounded-xl bg-bg-card" />
-              ))}
-            </div>
-          </div>
-        </div>
+    <button type="button" onClick={onClick} className={cls}>
+      {label}
+    </button>
+  );
+}
+
+function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-[#141C26] p-5 shadow-xl">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        {children}
       </div>
     </div>
   );
@@ -460,15 +522,7 @@ function DashboardSkeleton() {
 
 const CIRCLE_LENGTH = 2 * Math.PI * 40;
 
-function DonutChart({
-  data,
-  total,
-  size = 80,
-}: {
-  data: { name: string; count: number; color: string }[];
-  total: number;
-  size?: number;
-}) {
+function DonutChart({ data, total, size = 72 }: { data: { name: string; count: number; color: string }[]; total: number; size?: number }) {
   let offset = 0;
   const segments = data.map((d) => {
     const pct = total ? (d.count / total) * 100 : 0;
@@ -476,13 +530,11 @@ function DonutChart({
     offset += pct;
     return segment;
   });
-
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" className="shrink-0">
+    <svg width={size} height={size} viewBox="0 0 100 100" className="shrink-0" aria-hidden>
       <circle cx="50" cy="50" r="40" fill="none" stroke="#2A3A4B" strokeWidth="16" />
       {segments.map((seg, i) => {
         const dash = (seg.pct / 100) * CIRCLE_LENGTH;
-        const gap = CIRCLE_LENGTH - dash;
         return (
           <circle
             key={i}
@@ -492,647 +544,12 @@ function DonutChart({
             fill="none"
             stroke={seg.color}
             strokeWidth="16"
-            strokeDasharray={`${dash} ${gap}`}
+            strokeDasharray={`${dash} ${CIRCLE_LENGTH - dash}`}
             strokeDashoffset={-((seg.offset / 100) * CIRCLE_LENGTH)}
             transform="rotate(-90 50 50)"
           />
         );
       })}
-      <circle cx="50" cy="50" r="28" fill={dashboardContainerFill} />
-    </svg>
-  );
-}
-
-const dashboardRowFill = "rounded-xl bg-[#141C26] px-4 py-3.5";
-
-function formatWaitingPlayersLine(nicknames: string[]): string {
-  const list = nicknames.map((n) => String(n).trim()).filter(Boolean);
-  if (list.length === 0) return "—";
-  const shown = list.slice(0, 2);
-  const rest = list.length - shown.length;
-  const head = shown.join(", ");
-  if (rest > 0) return `${head}, ещё +${rest}`;
-  return head;
-}
-
-/** Оставшиеся секунды уровня; при паузе фиксируется на момент pausedAt */
-function getSessionRemainingSeconds(
-  levelDurationSeconds: number,
-  sessionStartTimeIso: string,
-  pausedAtIso?: string | null,
-  nowMs = Date.now(),
-): number {
-  const startMs = new Date(sessionStartTimeIso).getTime();
-  const endRefMs = pausedAtIso ? new Date(pausedAtIso).getTime() : nowMs;
-  const elapsedSec = Math.floor((endRefMs - startMs) / 1000);
-  return Math.max(0, levelDurationSeconds - elapsedSec);
-}
-
-function formatSessionCountdown(
-  levelDurationSeconds: number,
-  sessionStartTimeIso: string,
-  pausedAtIso?: string | null,
-  nowMs = Date.now(),
-): string {
-  const rem = getSessionRemainingSeconds(levelDurationSeconds, sessionStartTimeIso, pausedAtIso, nowMs);
-  const m = Math.floor(rem / 60);
-  const s = rem % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
-function QuickActionCard({ title, onClick }: { title: string; onClick: () => void }) {
-  return (
-    <div className={`flex items-center justify-between ${dashboardRowFill}`}>
-      <div className="flex items-center gap-3">
-        <UserRound className="w-4 h-4 text-[#AFC7DA] shrink-0" strokeWidth={1.75} />
-        <span className="text-sm text-white">{title}</span>
-      </div>
-      <button
-        type="button"
-        onClick={onClick}
-        className="shrink-0 flex items-center gap-1.5 text-sm font-medium text-cyan hover:opacity-90 transition-opacity bg-transparent p-0 border-0 cursor-pointer"
-      >
-        <Plus className="w-4 h-4 shrink-0" strokeWidth={2} />
-        Открыть форму
-      </button>
-    </div>
-  );
-}
-
-function RoomStatusRow({
-  room: roomProp,
-  onLaunch,
-  onSessionsChange,
-}: {
-  room: DashboardRoom;
-  onLaunch?: (room: { id: string; name: string }) => void;
-  onSessionsChange?: () => void;
-}) {
-  const [sessionPatch, setSessionPatch] = useState<Partial<DashboardRoom> | null>(null);
-  const [hydratingSession, setHydratingSession] = useState(false);
-
-  /** Сначала patch, потом поля дашборда; undefined из roomProp не затирает patch (иначе гидрация теряет activeSessionId). */
-  const room = useMemo(
-    () =>
-      ({
-        ...omitUndefinedShallow(sessionPatch ?? {}),
-        ...omitUndefinedShallow(roomProp),
-      }) as DashboardRoom,
-    [roomProp, sessionPatch],
-  );
-
-  const needsActiveSessionFetch = useMemo(() => {
-    if (room.status !== "occupied" || !room.id?.trim()) return false;
-    const hasId = Boolean(asNonEmptyString(room.activeSessionId));
-    const hasStart = Boolean(asNonEmptyString(room.sessionStartTime));
-    const dur = room.levelDurationSeconds;
-    const hasDur = typeof dur === "number" && Number.isFinite(dur) && dur > 0;
-    return !(hasId && hasStart && hasDur);
-  }, [
-    room.status,
-    room.id,
-    room.activeSessionId,
-    room.sessionStartTime,
-    room.levelDurationSeconds,
-  ]);
-
-  const roomPropHasFullSessionRow = useMemo(
-    () =>
-      roomProp.status === "occupied" &&
-      Boolean(roomProp.id?.trim()) &&
-      Boolean(asNonEmptyString(roomProp.activeSessionId)) &&
-      Boolean(asNonEmptyString(roomProp.sessionStartTime)) &&
-      typeof roomProp.levelDurationSeconds === "number" &&
-      Number.isFinite(roomProp.levelDurationSeconds) &&
-      roomProp.levelDurationSeconds > 0,
-    [
-      roomProp.status,
-      roomProp.id,
-      roomProp.activeSessionId,
-      roomProp.sessionStartTime,
-      roomProp.levelDurationSeconds,
-    ],
-  );
-
-  useEffect(() => {
-    if (roomProp.status !== "occupied") {
-      setSessionPatch(null);
-      setHydratingSession(false);
-    }
-  }, [roomProp.status]);
-
-  useEffect(() => {
-    if (roomPropHasFullSessionRow) setSessionPatch(null);
-  }, [roomPropHasFullSessionRow]);
-
-  useEffect(() => {
-    if (!needsActiveSessionFetch || !roomProp.id?.trim()) return;
-
-    let cancelled = false;
-    setHydratingSession(true);
-    void gameSessionsService
-      .list({ roomId: roomProp.id, status: "ACTIVE", limit: 1 })
-      .then((res) => {
-        if (cancelled) return;
-        const row = res?.data?.[0] as Record<string, unknown> | undefined;
-        if (!row) return;
-        const sid = pickStr(row, "id", "session_id");
-        if (!sid) return;
-
-        const players = Array.isArray(row.players) ? row.players : [];
-        const nicknames = players
-          .map((p) => {
-            const u =
-              p && typeof p === "object" && "user" in p
-                ? (p as { user?: { nickname?: unknown } }).user
-                : undefined;
-            return typeof u?.nickname === "string" ? u.nickname.trim() : "";
-          })
-          .filter(Boolean) as string[];
-
-        const userIds = players
-          .map((p) => {
-            if (!p || typeof p !== "object") return "";
-            const o = p as { userId?: unknown; user_id?: unknown };
-            const id = o.userId ?? o.user_id;
-            return id != null ? String(id) : "";
-          })
-          .filter(Boolean);
-
-        const roomRec =
-          row.room && typeof row.room === "object"
-            ? (row.room as Record<string, unknown>)
-            : {};
-        const dur = pickNum(roomRec, "defaultLevelDuration", "default_level_duration");
-        const startRaw = pickStr(row, "startTime", "start_time");
-        const pausedRaw = pickStr(row, "pausedAt", "paused_at");
-
-        const patch = {
-          activeSessionId: sid,
-          sessionStartTime: startRaw ? new Date(startRaw).toISOString() : undefined,
-          levelDurationSeconds: typeof dur === "number" && dur > 0 ? dur : undefined,
-          sessionPlayerNicknames: nicknames.length ? nicknames : undefined,
-          sessionPlayerUserIds: userIds.length ? userIds : undefined,
-          pausedAt: pausedRaw ? new Date(pausedRaw).toISOString() : undefined,
-        };
-        setSessionPatch(patch);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setHydratingSession(false);
-      });
-
-    return () => {
-      cancelled = true;
-      setHydratingSession(false);
-    };
-  }, [needsActiveSessionFetch, roomProp.id]);
-
-  const isFree = room.status === "free";
-  const isWaiting = room.status === "waiting";
-  const isOccupied = room.status === "occupied";
-  const [tick, setTick] = useState(0);
-  const [busy, setBusy] = useState(false);
-
-  const sessionId = room.activeSessionId?.trim() || null;
-
-  const canCountdown =
-    isOccupied &&
-    Boolean(room.sessionStartTime) &&
-    typeof room.levelDurationSeconds === "number" &&
-    room.levelDurationSeconds > 0;
-
-  const needTimerTick = canCountdown && !room.pausedAt;
-
-  useEffect(() => {
-    if (!needTimerTick) return;
-    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [needTimerTick]);
-
-  const remainingSeconds = useMemo(() => {
-    if (!canCountdown || !room.sessionStartTime || room.levelDurationSeconds == null) return null;
-    return getSessionRemainingSeconds(room.levelDurationSeconds, room.sessionStartTime, room.pausedAt);
-  }, [canCountdown, room.sessionStartTime, room.levelDurationSeconds, room.pausedAt, tick]);
-
-  const timeIsUp = remainingSeconds === 0;
-  const sessionCountdownLabel =
-    canCountdown && room.sessionStartTime && room.levelDurationSeconds != null
-      ? formatSessionCountdown(room.levelDurationSeconds, room.sessionStartTime, room.pausedAt)
-      : null;
-
-  const waitingNames = room.waitingPlayerNicknames?.length
-    ? room.waitingPlayerNicknames
-    : room.playerNickname
-      ? [room.playerNickname]
-      : [];
-
-  const inGameNames = room.sessionPlayerNicknames?.length
-    ? room.sessionPlayerNicknames
-    : room.playerNickname
-      ? [room.playerNickname]
-      : [];
-
-  const playerUserIdsForEnd = room.sessionPlayerUserIds?.length
-    ? room.sessionPlayerUserIds
-    : [];
-
-  /** Завершить активную сессию: списание за фактическое время (как «Завершить» по таймеру, так и «Стоп» вручную).
-   * Гости без userId: пустой results → backend шлёт Room API /session/stop. */
-  const handleFinalizeSession = async () => {
-    if (!sessionId || busy) return;
-    if (!canCountdown || room.levelDurationSeconds == null || remainingSeconds == null) return;
-
-    const usedSeconds = Math.min(
-      room.levelDurationSeconds,
-      Math.max(1, room.levelDurationSeconds - remainingSeconds),
-    );
-
-    setBusy(true);
-    try {
-      await gameSessionsService.end(sessionId, {
-        durationSeconds: usedSeconds,
-        results: playerUserIdsForEnd.map((userId) => ({ userId, score: 0 })),
-      });
-      onSessionsChange?.();
-    } catch (e) {
-      console.error(e);
-      if (isAxiosNotFound(e)) {
-        setSessionPatch(null);
-        onSessionsChange?.();
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handlePrimarySessionAction = async () => {
-    if (busy) return;
-    if (isWaiting) {
-      // Зал: старт только «НАЧАТЬ ИГРУ» на HUD — CRM activate даст 400.
-      if (!room.useDevCommands) return;
-      if (!roomProp.pendingSessionToken) return;
-      setBusy(true);
-      try {
-        await gameSessionsService.activateByToken(roomProp.pendingSessionToken);
-        onSessionsChange?.();
-      } catch (e) {
-        console.error(e);
-        window.alert(readApiUserError(e, "Не удалось запустить сессию"));
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    if (!isOccupied || !sessionId) return;
-
-    if (canCountdown && timeIsUp) {
-      await handleFinalizeSession();
-      return;
-    }
-
-    setBusy(true);
-    try {
-      if (room.pausedAt) {
-        await gameSessionsService.resumeActive(sessionId);
-      } else {
-        await gameSessionsService.pauseActive(sessionId);
-      }
-      onSessionsChange?.();
-    } catch (e) {
-      console.error(e);
-      if (isAxiosNotFound(e)) {
-        setSessionPatch(null);
-        onSessionsChange?.();
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const hallAwaitsHud = isWaiting && !room.useDevCommands;
-  const waitingLabel = busy ? "Запуск…" : hallAwaitsHud ? "Ждём HUD" : "Начать";
-
-  const occupiedShowComplete = Boolean(isOccupied && sessionId && canCountdown && timeIsUp);
-  const occupiedPaused = Boolean(isOccupied && sessionId && room.pausedAt && !timeIsUp);
-  const occupiedRunning = Boolean(isOccupied && sessionId && !room.pausedAt && canCountdown && !timeIsUp);
-
-  const sessionEndBlocked =
-    busy ||
-    !sessionId ||
-    (hydratingSession && !canCountdown) ||
-    !canCountdown ||
-    remainingSeconds === null;
-
-  const occupiedLabel = (() => {
-    if (!isOccupied) return "";
-    if (!sessionId) return hydratingSession ? "Загрузка…" : "Сессия не найдена";
-    if (busy) return "…";
-    if (hydratingSession && !canCountdown) return "Загрузка…";
-    if (occupiedShowComplete) return "Завершить";
-    if (occupiedPaused && sessionCountdownLabel) return `Продолжить (${sessionCountdownLabel})`;
-    if (occupiedRunning && sessionCountdownLabel) return `Пауза (${sessionCountdownLabel})`;
-    if (canCountdown && sessionCountdownLabel) return `Пауза (${sessionCountdownLabel})`;
-    return "Пауза";
-  })();
-
-  return (
-    <div className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${dashboardRowFill}`}>
-      <span className="text-sm font-medium text-white">{room.name}</span>
-      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-        {isWaiting && (
-          <>
-            <span className="text-sm text-text-secondary min-w-0 sm:max-w-[min(100%,22rem)]">
-              {hallAwaitsHud ? "Лобби на экране: " : "Игроки в ожидании: "}
-              <span className="text-white">{formatWaitingPlayersLine(waitingNames)}</span>
-              {hallAwaitsHud ? (
-                <span className="mt-0.5 block text-xs text-text-muted">
-                  Режим и «НАЧАТЬ ИГРУ» — на моноблоке
-                </span>
-              ) : null}
-            </span>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {hallAwaitsHud ? (
-                <span
-                  className="inline-flex min-h-[2.25rem] min-w-[6rem] items-center justify-center gap-1.5 rounded-full border border-surface-border px-3 py-1.5 text-sm font-medium text-text-secondary"
-                  title="Старт только кнопкой на HUD комнаты"
-                >
-                  {waitingLabel}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={busy || !roomProp.pendingSessionToken}
-                  onClick={() => void handlePrimarySessionAction()}
-                  className="inline-flex min-h-[2.25rem] min-w-[6rem] items-center justify-center gap-1.5 rounded-full bg-cyan px-3 py-1.5 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Play className="h-4 w-4 shrink-0 fill-current" />
-                  <span className="whitespace-nowrap">{waitingLabel}</span>
-                </button>
-              )}
-            </div>
-          </>
-        )}
-        {isFree && (
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => onLaunch?.({ id: room.id, name: room.name })}
-              className="flex items-center gap-1.5 border-0 bg-transparent p-0 text-sm font-medium text-cyan transition-opacity hover:opacity-90 cursor-pointer"
-            >
-              <CirclePlus className="h-4 w-4 shrink-0" strokeWidth={2} />
-              Запустить
-            </button>
-            <span className="text-sm font-medium text-success">Свободно</span>
-          </div>
-        )}
-        {isOccupied && (
-          <>
-            <span className="text-sm text-text-secondary min-w-0 sm:max-w-[min(100%,22rem)]">
-              Игроки:{" "}
-              <span className="text-white">
-                {inGameNames.length
-                  ? formatWaitingPlayersLine(inGameNames)
-                  : "Гости"}
-              </span>
-            </span>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {!occupiedShowComplete ? (
-                <button
-                  type="button"
-                  disabled={sessionEndBlocked}
-                  onClick={() => void handleFinalizeSession()}
-                  title="Полностью остановить комнату и завершить сессию (списание за сыгранное время)"
-                  className="inline-flex min-h-[2.25rem] min-w-[6.5rem] items-center justify-center gap-1.5 rounded-full border border-danger/55 bg-transparent px-3 py-1.5 text-sm font-medium text-danger transition-opacity hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <CircleStop className="h-4 w-4 shrink-0" />
-                  <span className="whitespace-nowrap">Стоп</span>
-                </button>
-              ) : null}
-              <button
-                type="button"
-                disabled={
-                  busy ||
-                  !sessionId ||
-                  (hydratingSession && !canCountdown)
-                }
-                onClick={() => void handlePrimarySessionAction()}
-                className={`inline-flex min-h-[2.25rem] min-w-[7rem] items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-opacity disabled:cursor-not-allowed disabled:opacity-50 ${
-                  occupiedShowComplete
-                    ? "bg-amber-500 text-black hover:opacity-90"
-                    : occupiedPaused
-                      ? "border border-surface-border text-white hover:bg-white/5"
-                      : "bg-cyan text-black hover:opacity-90"
-                }`}
-              >
-                {occupiedShowComplete ? (
-                  <Square className="h-4 w-4 shrink-0 fill-current" />
-                ) : null}
-                {occupiedRunning ? <Pause className="h-4 w-4 shrink-0" /> : null}
-                {occupiedPaused ? <Play className="h-4 w-4 shrink-0 fill-current" /> : null}
-                <span className="whitespace-nowrap">{occupiedLabel}</span>
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-type QuickTopUpPick = { id: string; nickname: string; phone: string };
-
-function formatPhoneShort(phone: string) {
-  const d = String(phone || "").replace(/\D/g, "").slice(-10);
-  if (d.length < 10) return String(phone || "").trim() || "—";
-  return `+7 (${d.slice(0, 3)}) ${d.slice(3, 6)} ${d.slice(6)}`;
-}
-
-function QuickTopUpModal({
-  isOpen,
-  onClose,
-  onSelectPlayer,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onSelectPlayer: (playerId: string) => void;
-}) {
-  const [mounted, setMounted] = useState(false);
-  const [playerSearch, setPlayerSearch] = useState("");
-  const [searchResults, setSearchResults] = useState<QuickTopUpPick[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setPlayerSearch("");
-    setSearchResults([]);
-    setSearchLoading(false);
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const q = playerSearch.trim();
-    if (q.length < 2) {
-      setSearchResults([]);
-      setSearchLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const handle = window.setTimeout(() => {
-      setSearchLoading(true);
-      playersService
-        .list({ q, page: 1, limit: 12 })
-        .then((res: { data?: unknown[] }) => {
-          if (cancelled) return;
-          const raw = Array.isArray(res?.data) ? res.data : [];
-          const rows: QuickTopUpPick[] = raw
-            .map((p) => {
-              const o = p as Record<string, unknown>;
-              const id = o.id != null ? String(o.id) : "";
-              const nickname = o.nickname != null ? String(o.nickname) : "";
-              const phone = o.phone != null ? String(o.phone) : "";
-              return { id, nickname, phone };
-            })
-            .filter((r) => r.id && r.nickname);
-          setSearchResults(rows);
-        })
-        .catch(() => {
-          if (!cancelled) setSearchResults([]);
-        })
-        .finally(() => {
-          setSearchLoading(false);
-        });
-    }, 320);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [playerSearch, isOpen]);
-
-  if (!mounted || !isOpen) return null;
-
-  return createPortal(
-    <div className="fixed inset-0 z-[200] h-[100dvh] w-full max-w-[100vw]">
-      <button
-        type="button"
-        className="absolute inset-0 h-full min-h-[100dvh] w-full border-0 bg-black/25 p-0 backdrop-blur-xl"
-        onClick={onClose}
-        aria-label="Закрыть"
-      />
-      <div
-        className="absolute bottom-0 left-1/2 top-0 z-10 flex w-full max-w-xl -translate-x-1/2 flex-col bg-[#141C26] shadow-none"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6" style={{ paddingTop: "max(1.5rem, calc(env(safe-area-inset-top, 0px) + 0.75rem))" }}>
-          <div className="my-auto mx-auto flex w-full max-w-md flex-col gap-6 pb-10 pt-4">
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full border border-surface-border text-white hover:bg-white/5">
-                <BackIcon />
-              </button>
-              <h2 className="text-lg font-semibold text-white">Пополнить минуты</h2>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Input
-                label="Никнейм или телефон"
-                value={playerSearch}
-                onChange={(e) => setPlayerSearch(e.target.value)}
-                autoComplete="off"
-              />
-              {playerSearch.trim().length > 0 && playerSearch.trim().length < 2 ? (
-                <p className="text-xs text-text-secondary">Введите не меньше 2 символов</p>
-              ) : null}
-              {searchLoading ? <p className="text-xs text-text-secondary">Поиск…</p> : null}
-              {!searchLoading && playerSearch.trim().length >= 2 && searchResults.length === 0 ? (
-                <p className="text-xs text-text-secondary">Никого не найдено</p>
-              ) : null}
-              {searchResults.length > 0 ? (
-                <ul className="max-h-[min(50vh,20rem)] overflow-y-auto rounded-xl border border-surface-border/40 bg-[#1F2B38] py-1">
-                  {searchResults.map((p) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => onSelectPlayer(p.id)}
-                        className="flex w-full flex-col items-start gap-0.5 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
-                      >
-                        <span className="text-sm font-medium text-white">{p.nickname}</span>
-                        <span className="text-xs text-text-secondary">{formatPhoneShort(p.phone)}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function QuickCreateTeamModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [mounted, setMounted] = useState(false);
-  const [teamName, setTeamName] = useState("");
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setTeamName("");
-  }, [isOpen]);
-
-  if (!mounted || !isOpen) return null;
-
-  return createPortal(
-    <div className="fixed inset-0 z-[200] h-[100dvh] w-full max-w-[100vw]">
-      <button
-        type="button"
-        className="absolute inset-0 h-full min-h-[100dvh] w-full border-0 bg-black/25 p-0 backdrop-blur-xl"
-        onClick={onClose}
-        aria-label="Закрыть"
-      />
-      <div
-        className="absolute bottom-0 left-1/2 top-0 z-10 flex w-full max-w-xl -translate-x-1/2 flex-col bg-[#141C26] shadow-none"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6" style={{ paddingTop: "max(1.5rem, calc(env(safe-area-inset-top, 0px) + 0.75rem))" }}>
-          <div className="my-auto mx-auto flex w-full max-w-md flex-col gap-6 pb-10 pt-4">
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full border border-surface-border text-white hover:bg-white/5">
-                <BackIcon />
-              </button>
-              <h2 className="text-lg font-semibold text-white">Создать команду</h2>
-            </div>
-            <form
-              className="flex flex-col gap-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onClose();
-              }}
-            >
-              <Input label="Название команды" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
-              <Button type="submit" className="mt-2 inline-flex w-fit items-center justify-center gap-2">
-                Сохранить
-              </Button>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function BackIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M19 12H5M12 19l-7-7 7-7" />
     </svg>
   );
 }
