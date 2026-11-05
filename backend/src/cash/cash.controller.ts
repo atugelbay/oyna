@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { CashService } from './cash.service';
-import { CancelSaleDto, CashMoveDto, CatalogDto, CloseShiftDto, CreateSaleDto, OpenShiftDto } from './dto';
+import { CancelSaleDto, CashMoveDto, CatalogDto, CloseShiftDto, CreateSaleDto, OpenShiftDto, RefundSaleDto } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards';
 import { CurrentUser, Roles } from '../common/decorators';
@@ -71,6 +71,29 @@ export class CashController {
     @CurrentUser('role') role: Role,
   ) {
     return this.cash.cancel(id, dto, actorId, role);
+  }
+
+  @Post('sales/:id/refund')
+  @Roles(Role.ADMIN)
+  refund(
+    @Param('id') id: string,
+    @Body() dto: RefundSaleDto,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('role') role: Role,
+  ) {
+    return this.cash.refund(id, dto, actorId, role);
+  }
+
+  @Get('bookings')
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  bookings(@Query('venueId') venueId: string, @Query('q') q?: string) {
+    return this.cash.bookingsForCash(venueId, q);
+  }
+
+  @Get('alerts/overdue-shifts')
+  @Roles(Role.ADMIN)
+  overdueShifts(@Query('venueId') venueId?: string) {
+    return this.cash.overdueShifts(venueId);
   }
 
   @Get('operators')

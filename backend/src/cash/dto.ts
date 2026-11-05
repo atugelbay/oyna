@@ -67,6 +67,15 @@ export class SaleLineDto {
   @IsInt()
   @Min(0)
   minutes?: number;
+
+  /** ITEM — плитка каталога, CERTIFICATE — сертификат на минуты плитки, BOOKING — оплата брони */
+  @IsOptional()
+  @IsIn(['ITEM', 'CERTIFICATE', 'BOOKING'])
+  kind?: 'ITEM' | 'CERTIFICATE' | 'BOOKING';
+
+  @IsOptional()
+  @IsUUID()
+  bookingId?: string;
 }
 
 export class SalePayDto {
@@ -90,6 +99,17 @@ export class CreateSaleDto {
   @IsOptional()
   @IsUUID()
   userId?: string;
+
+  /** Несколько игроков в одном чеке: минуты делятся поровну */
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  userIds?: string[];
+
+  /** Продажа гостю без аккаунта: минуты не начисляются */
+  @IsOptional()
+  @IsBoolean()
+  guest?: boolean;
 
   @IsArray()
   @ValidateNested({ each: true })
@@ -120,7 +140,21 @@ export class CreateSaleDto {
 
 export class CancelSaleDto {
   @IsString()
+  @IsNotEmpty({ message: 'Укажите причину' })
   reason: string;
+}
+
+export class RefundSaleDto {
+  @IsInt()
+  @Min(1)
+  amountTenge: number;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Укажите причину возврата' })
+  reason: string;
+
+  @IsIn(['CASH', 'KASPI', 'HALYK', 'FREEDOM'])
+  method: 'CASH' | 'KASPI' | 'HALYK' | 'FREEDOM';
 }
 
 export class CashMoveDto {

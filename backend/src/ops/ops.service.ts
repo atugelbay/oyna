@@ -269,7 +269,7 @@ export class OpsService {
       );
       // Бартер в выручку не входит, показывается отдельной строкой
       const barter = inMonth.filter((s) => s.isBarter);
-      const revenue = inMonth.filter((s) => !s.isBarter).reduce((sum, s) => sum + s.totalTenge, 0);
+      const revenue = inMonth.filter((s) => !s.isBarter).reduce((sum, s) => sum + s.totalTenge - s.refundTenge, 0);
       const spent = expenses
         .filter((e) => almatyParts(e.occurredOn).month === m)
         .reduce((sum, e) => sum + e.amountTenge, 0);
@@ -545,10 +545,11 @@ export class OpsService {
     if (!plan) throw new NotFoundException('План месяца не задан');
     const from = new Date(Date.UTC(year, month - 1, 1) - 5 * 3600000);
     const to = new Date(Date.UTC(year, month, 1) - 5 * 3600000);
-    const revenue = (await this.prisma.sale.aggregate({
+    const monthSales = await this.prisma.sale.aggregate({
       where: { venueId, status: 'COMPLETED', createdAt: { gte: from, lt: to } },
-      _sum: { totalTenge: true },
-    }))._sum.totalTenge ?? 0;
+      _sum: { totalTenge: true, refundTenge: true },
+    });
+    const revenue = (monthSales._sum.totalTenge ?? 0) - (monthSales._sum.refundTenge ?? 0);
     const rate = planRatePercent(revenue, {
       plan: plan.planTenge,
       overplan: plan.overplanTenge,

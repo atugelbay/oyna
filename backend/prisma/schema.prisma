@@ -783,6 +783,16 @@ model Sale {
   enteredAfterOutage Boolean   @default(false)
   /** Бартер: 0 ₸ по договору, в выручку не входит, показывается отдельной строкой */
   isBarter          Boolean    @default(false)
+  /** Гость без аккаунта: минуты не начисляются */
+  isGuest           Boolean    @default(false)
+  /** Все игроки чека (минуты делятся поровну); userId — первый из них */
+  userIds           String[]   @default([])
+  bookingId         String?
+  /** Возврат денег (только владелец): сумма вычитается из выручки */
+  refundTenge       Int        @default(0)
+  refundReason      String?
+  refundedById      String?
+  refundedAt        DateTime?
   cancelReason      String?
   cancelledById     String?
   cancelledAt       DateTime?
@@ -797,6 +807,7 @@ model Sale {
   @@index([operatorId, createdAt])
   @@index([userId])
   @@index([shiftId])
+  @@index([bookingId])
   @@map("sales")
 }
 
@@ -808,6 +819,10 @@ model SaleLine {
   qty        Int
   priceTenge Int
   minutes    Int    @default(0)
+  /** ITEM — позиция каталога, CERTIFICATE — подарочный сертификат, BOOKING — оплата брони */
+  kind       String @default("ITEM")
+  /** Категория каталога на момент продажи */
+  category   String?
 
   sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
@@ -912,6 +927,8 @@ model Booking {
   people        Int
   amountTenge   Int
   prepayTenge   Int           @default(0)
+  /** Сколько уже оплачено через кассу */
+  paidTenge     Int           @default(0)
   broughtById   String
   sourceCode    String
   status        BookingStatus @default(NEW)

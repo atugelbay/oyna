@@ -81,6 +81,8 @@ export class MinuteLedgerService implements OnModuleInit, OnModuleDestroy {
     tier: LoyaltyTier;
     operatorId: string;
     transactionId: string;
+    /** Свой ключ, когда по одной продаже начисляют нескольким игрокам */
+    idempotencyKey?: string;
     venueId?: string;
     description: string;
   }) {
@@ -106,7 +108,7 @@ export class MinuteLedgerService implements OnModuleInit, OnModuleDestroy {
           kind: MinuteKind.PAID,
           source: 'topup',
           reason: input.description,
-          idempotencyKey: `topup:${input.transactionId}`,
+          idempotencyKey: `topup:${input.idempotencyKey ?? input.transactionId}`,
           createdById: input.operatorId,
           transactionId: input.transactionId,
           tier: input.tier,
@@ -121,7 +123,7 @@ export class MinuteLedgerService implements OnModuleInit, OnModuleDestroy {
           kind: MinuteKind.BONUS,
           source: 'topup_bonus',
           reason: `Бонус к пополнению ${bonusMinutes} мин`,
-          idempotencyKey: `topup_bonus:${input.transactionId}`,
+          idempotencyKey: `topup_bonus:${input.idempotencyKey ?? input.transactionId}`,
           createdById: input.operatorId,
           transactionId: input.transactionId,
           tier: input.tier,

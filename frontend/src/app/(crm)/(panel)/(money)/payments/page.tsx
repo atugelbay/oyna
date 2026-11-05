@@ -5,18 +5,24 @@ import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
 import { payMethodLabel, saleStatusLabel } from "@/lib/crm-labels";
 import { formatTenge } from "@/lib/money";
+import { useAuth } from "@/lib/auth-context";
+import { almatyRange, almatyToday } from "@/lib/almaty";
 
 const METHODS = ["", "CASH", "KASPI", "HALYK", "FREEDOM"] as const;
 
 export default function PaymentsPage() {
   const { selectedVenueId } = useCrmVenue();
+  const { user } = useAuth();
+  const isAdmin = user?.role?.toUpperCase() === "ADMIN";
+  const [operators, setOperators] = useState<{ id: string; name: string }[]>([]);
+  const [operatorId, setOperatorId] = useState("");
   const [rows, setRows] = useState<any[]>([]);
   const [totals, setTotals] = useState<any>(null);
   const [error, setError] = useState("");
   const [method, setMethod] = useState("");
   const [cancelledOnly, setCancelledOnly] = useState(false);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(almatyToday());
+  const [to, setTo] = useState(almatyToday());
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,9 +35,9 @@ export default function PaymentsPage() {
           venueId: selectedVenueId || undefined,
           method: method || undefined,
           cancelled: cancelledOnly ? "1" : undefined,
-          from: from || undefined,
-          to: to || undefined,
-          limit: 100,
+          operatorId: isAdmin && operatorId ? operatorId : undefined,
+          ...almatyRange(from, to),
+          limit: 500,
         },
       });
       setRows(data.data ?? []);
@@ -43,7 +49,18 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     void load();
-  }, [selectedVenueId, method, cancelledOnly, from, to]);
+  }, [selectedVenueId, method, cancelledOnly, from, to, operatorId]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api
+      .get("/settings/employees")
+      .then(({ data }) => {
+        const list = Array.isArray(data) ? data : data?.data ?? [];
+        setOperators(list.map((e: any) => ({ id: String(e.id), name: String(e.name || e.nickname || e.phone) })));
+      })
+      .catch(() => setOperators([]));
+  }, [isAdmin]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -52,6 +69,7 @@ export default function PaymentsPage() {
       const blob = [
         row.operatorName,
         row.playerNickname,
+        ...(row.playerNicknames ?? []),
         row.playerPhone,
         row.number,
         ...(row.lines?.map((l: any) => l.name) ?? []),
@@ -124,6 +142,20 @@ export default function PaymentsPage() {
             </option>
           ))}
         </select>
+        {isAdmin ? (
+          <select
+            value={operatorId}
+            onChange={(e) => setOperatorId(e.target.value)}
+            className="min-h-11 rounded-xl bg-bg-secondary px-3 text-sm"
+          >
+            <option value="">Все операторы</option>
+            {operators.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <label className="flex min-h-11 items-center gap-2 rounded-xl bg-bg-secondary px-3 text-sm">
           <input type="checkbox" checked={cancelledOnly} onChange={(e) => setCancelledOnly(e.target.checked)} />
           Только отменённые
@@ -164,8 +196,18 @@ export default function PaymentsPage() {
               {new Date(row.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })} · {row.operatorName}
               {row.shift?.number != null ? ` · смена ${row.shift.number}` : ""}
             </span>
+            <span>
+              {row.isGuest ? "Гость" : (row.playerNicknames ?? []).join(", ") || "без игрока"}
+              {" · "}
+              {(row.lines ?? []).map((l: any) => `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ""}`).join(", ")}
+              {row.minutesCredited ? ` · ${row.minutesCredited} мин` : ""}
+            </span>
             <span className="text-text-secondary">
-              {(row.payments ?? []).map((p: any) => `${payMethodLabel(p.method)} ${p.amountTenge}`).join(", ")}
+              {row.isBarter
+                ? row.comment || "Бартер"
+                : (row.payments ?? []).map((p: any) => `${payMethodLabel(p.method)} ${formatTenge(p.amountTenge)}`).join(" + ")}
+              {row.refundTenge > 0 ? ` · возврат ${formatTenge(row.refundTenge)}` : ""}
+              {row.status === "COMPLETED" && !row.isBarter && !row.receiptChecked ? " · без чека" : ""}
             </span>
           </button>
         ))}
@@ -182,7 +224,12 @@ export default function PaymentsPage() {
             <div className="mt-4 space-y-2 text-sm">
               <p>Оператор: {selected.operatorName}</p>
               <p>Смена: {selected.shift?.number ?? "—"}</p>
-              <p>Игрок: {selected.playerNickname ?? "без аккаунта"}{selected.playerPhone ? ` · ${selected.playerPhone}` : ""}</p>
+              <p>
+                {selected.isGuest
+                  ? "Гость — без минут"
+                  : `Игроки: ${(selected.playerNicknames ?? []).join(", ") || "без аккаунта"}`}
+                {selected.playerPhone ? ` · ${selected.playerPhone}` : ""}
+              </p>
               <p>Минуты: {selected.minutesCredited ?? 0}</p>
               <p>Чек: {selected.receiptChecked ? "пробит" : "не отмечен"}{selected.receiptNumber ? ` · ${selected.receiptNumber}` : ""}</p>
               <p className="font-medium">Состав</p>
@@ -199,11 +246,18 @@ export default function PaymentsPage() {
                 {(selected.payments ?? []).map((p: any) => (
                   <li key={p.id}>
                     {payMethodLabel(p.method)} {formatTenge(p.amountTenge)}
-                    {p.changeTenge != null ? ` · сдача ${p.changeTenge}` : ""}
+                    {p.changeTenge != null ? ` · сдача ${formatTenge(p.changeTenge)}` : ""}
                   </li>
                 ))}
               </ul>
               {selected.cancelReason ? <p>Причина отмены: {selected.cancelReason}</p> : null}
+              {selected.refundTenge > 0 ? (
+                <p>
+                  Возврат: {formatTenge(selected.refundTenge)}
+                  {selected.refundReason ? ` · ${selected.refundReason}` : ""}
+                </p>
+              ) : null}
+              {selected.isBarter && selected.comment ? <p>Бартер: {selected.comment}</p> : null}
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
               {selected.status !== "CANCELLED" ? (

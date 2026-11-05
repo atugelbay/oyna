@@ -50,7 +50,7 @@ export function sessionOutcomeLabel(outcome?: string | null) {
 
 export const CATALOG_CATEGORY_LABEL: Record<string, string> = {
   GAMES: "Игра",
-  PACKAGES: "Пакеты",
+  PACKAGES: "Дни рождения и тимбилдинг",
   PROMO: "Акции",
   CERTIFICATE: "Сертификаты",
   WATER: "Товары",

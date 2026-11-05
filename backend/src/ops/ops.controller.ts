@@ -184,8 +184,9 @@ export class OpsController {
     return this.ops.listCertificates(venueId);
   }
 
+  /** Выпуск без оплаты — только владелец; обычная продажа сертификата идёт через кассу */
   @Post('certificates')
-  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  @Roles(Role.ADMIN)
   issue(@Body() body: any, @CurrentUser('id') actorId: string) {
     return this.ops.issueCertificate({ ...body, actorId });
   }
