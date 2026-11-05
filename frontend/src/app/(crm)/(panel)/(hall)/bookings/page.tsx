@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
 import { bookingStatusLabel } from "@/lib/crm-labels";
+import { almatyRange, almatyToday } from "@/lib/almaty";
+import { formatTenge } from "@/lib/money";
+import { BookingCalendar, almatyDayKey } from "@/components/crm/BookingCalendar";
 
 const BIRTHDAY_PACKAGES = [
   { name: "START", minutes: 40, price: 50000 },
@@ -40,6 +43,9 @@ export default function BookingsPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
   const [error, setError] = useState("");
+  const today = almatyToday();
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [selectedDay, setSelectedDay] = useState(today);
   const [form, setForm] = useState({
     type: "BIRTHDAY" as "BIRTHDAY" | "TEAMBUILDING",
     startsAt: "",
@@ -71,7 +77,12 @@ export default function BookingsPage() {
 
   async function load() {
     const [{ data }, sourcesRes] = await Promise.all([
-      api.get("/bookings", { params: { venueId: selectedVenueId || undefined } }),
+      api.get("/bookings", {
+        params: {
+          venueId: selectedVenueId || undefined,
+          ...almatyRange(`${month}-01`, lastDayOf(month)),
+        },
+      }),
       api.get("/sources").catch(() => ({ data: [] })),
     ]);
     setRows(data);
@@ -83,7 +94,18 @@ export default function BookingsPage() {
 
   useEffect(() => {
     load().catch((e) => setError(e?.response?.data?.message || "Не загрузилось"));
-  }, [selectedVenueId]);
+  }, [selectedVenueId, month]);
+
+  const counts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const row of rows) {
+      if (row.status === "CANCELLED" || row.status === "NO_SHOW") continue;
+      const key = almatyDayKey(row.startsAt);
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    return map;
+  }, [rows]);
+  const dayRows = rows.filter((row) => almatyDayKey(row.startsAt) === selectedDay);
 
   // С главной «Новая бронь» → /bookings?new=1: сразу к полю даты
   useEffect(() => {
@@ -135,6 +157,14 @@ export default function BookingsPage() {
         sourceCode: form.sourceCode,
         comment: form.broughtByName ? `Кто привёл: ${form.broughtByName}` : undefined,
       });
+      const day = form.startsAt.slice(0, 10);
+      if (day) {
+        setSelectedDay(day);
+        if (day.slice(0, 7) !== month) {
+          setMonth(day.slice(0, 7));
+          return;
+        }
+      }
       await load();
     } catch (e: any) {
       setError(e?.response?.data?.message || "Не создано");
@@ -308,8 +338,24 @@ export default function BookingsPage() {
         </button>
       </div>
 
+      <BookingCalendar
+        month={month}
+        selectedDay={selectedDay}
+        today={today}
+        counts={counts}
+        onMonthChange={(next) => {
+          setMonth(next);
+          setSelectedDay(next === today.slice(0, 7) ? today : `${next}-01`);
+        }}
+        onSelectDay={setSelectedDay}
+      />
+
+      <h2 className="text-lg font-semibold">
+        Брони на {new Date(`${selectedDay}T12:00:00Z`).toLocaleDateString("ru-RU", { day: "numeric", month: "long", timeZone: "UTC" })}
+      </h2>
+      {dayRows.length === 0 ? <p className="text-sm text-text-secondary">Броней нет</p> : null}
       <div className="space-y-2">
-        {rows.map((row) => (
+        {dayRows.map((row) => (
           <article key={row.id} className="rounded-xl bg-bg-secondary p-3 text-sm">
             <p className="font-semibold">
               {row.type === "BIRTHDAY" ? "ДР" : "Тимбилдинг"} · {row.contactName} · {bookingStatusLabel(row.status)}
@@ -319,7 +365,8 @@ export default function BookingsPage() {
               {row.amountTenge?.toLocaleString("ru-KZ")} ₸
             </p>
             <p>
-              Предоплата {row.prepayTenge?.toLocaleString("ru-KZ")} ₸ · остаток {(row.amountTenge - row.prepayTenge).toLocaleString("ru-KZ")} ₸
+              Оплачено {formatTenge(row.paidTenge ?? 0)} из {formatTenge(row.amountTenge)} · остаток{" "}
+              {formatTenge(Math.max(0, row.amountTenge - (row.paidTenge ?? 0)))}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               {STATUSES.map((status) => (
@@ -338,4 +385,9 @@ export default function BookingsPage() {
       </div>
     </div>
   );
+}
+
+function lastDayOf(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
 }

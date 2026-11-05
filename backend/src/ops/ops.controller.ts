@@ -62,17 +62,17 @@ export class OpsController {
   ) {
     const journal = await this.ops.sessionsJournal({ venueId, page: 1, take: 2000, actorRole });
     const html = excelTable(
-      ['Начало', 'Конец', 'Комната', 'Режим', 'Игроки', 'Оплаченные мин', 'Бонусные мин', 'Статус', 'Причина'],
+      ['Начало', 'Конец', 'Комната', 'Режим', 'Игроки, мин', 'Оплаченные мин', 'Бонусные мин', 'Статус', 'Причина'],
       journal.data.map((row) => [
         row.start ? formatAlmaty(row.start) : '',
         row.end ? formatAlmaty(row.end) : '',
         row.room,
         row.mode,
-        row.players.join(', '),
+        row.playerMinutes.map((p) => `${p.nickname} ${p.minutes}`).join(', ') || 'Гость',
         row.paidMinutes,
         row.bonusMinutes,
         SESSION_OUTCOME_LABEL[row.outcome],
-        row.endReason ?? '',
+        [row.endReason, ...row.compensations.map((c) => c.note)].filter(Boolean).join('; '),
       ]),
     );
     res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
@@ -263,14 +263,23 @@ export class OpsController {
     return this.ops.deletePlayer(id, actorId);
   }
 
-  @Post('players/:id/compensate/:sessionId')
+  @Post('sessions/:sessionId/compensate')
   @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
   compensate(
     @Param('sessionId') sessionId: string,
-    @Body() body: { reason: string },
+    @Body() body: { userIds?: string[]; minutes?: number; reason?: string; comment?: string },
     @CurrentUser('id') actorId: string,
+    @CurrentUser('role') actorRole: Role,
   ) {
-    return this.ledger.compensateSession(sessionId, actorId, body.reason);
+    return this.ops.compensateSession({
+      sessionId,
+      userIds: Array.isArray(body.userIds) ? body.userIds.map(String) : [],
+      minutes: Number(body.minutes),
+      reason: String(body.reason ?? ''),
+      comment: typeof body.comment === 'string' ? body.comment : undefined,
+      actorId,
+      actorRole,
+    });
   }
 
   @Get('balance/legacy-report')

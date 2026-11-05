@@ -540,7 +540,7 @@ export function RoomControlList({
   onLaunchHandled?: () => void;
 }) {
   const [rooms, setRooms] = useState<DashboardRoom[]>([]);
-  const [offline, setOffline] = useState<Record<string, boolean>>({});
+  const [live, setLive] = useState<Record<string, { offline: boolean; mode: string | null }>>({});
   const [loaded, setLoaded] = useState(false);
   const [launchRoom, setLaunchRoom] = useState<{ id: string; name: string } | null>(null);
 
@@ -555,9 +555,11 @@ export function RoomControlList({
     api
       .get("/live", { params: { venueId: venueId || undefined } })
       .then(({ data }) => {
-        const map: Record<string, boolean> = {};
-        for (const r of Array.isArray(data) ? data : []) map[String(r.roomId)] = Boolean(r.offline);
-        setOffline(map);
+        const map: Record<string, { offline: boolean; mode: string | null }> = {};
+        for (const r of Array.isArray(data) ? data : []) {
+          map[String(r.roomId)] = { offline: Boolean(r.offline), mode: r.mode ? String(r.mode) : null };
+        }
+        setLive(map);
       })
       .catch(() => {});
   }, [venueId]);
@@ -593,9 +595,13 @@ export function RoomControlList({
         {rooms.length === 0 ? <p className="text-sm text-text-secondary">Комнат нет</p> : null}
         {rooms.map((room) => (
           <div key={room.id}>
-            {offline[room.id] ? (
+            {live[room.id]?.offline ? (
               <p className="mb-1 flex items-center gap-1.5 text-xs text-danger">
                 <WifiOff className="h-3.5 w-3.5" /> {room.name}: нет связи с комнатой
+              </p>
+            ) : live[room.id]?.mode && room.status === "occupied" ? (
+              <p className="mb-1 text-xs text-text-secondary">
+                {room.name}: режим «{live[room.id]?.mode}»
               </p>
             ) : null}
             <RoomStatusRow room={room} onLaunch={(r) => setLaunchRoom(r)} onSessionsChange={refresh} />

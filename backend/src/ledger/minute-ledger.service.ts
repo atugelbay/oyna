@@ -195,40 +195,6 @@ export class MinuteLedgerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async compensateSession(sessionId: string, actorId: string, reason: string) {
-    const session = await this.prisma.gameSession.findUnique({
-      where: { id: sessionId },
-      include: { players: true },
-    });
-    if (!session) throw new BadRequestException('Сеанс не найден');
-    if (session.compensatedAt) throw new BadRequestException('Компенсация по этому сеансу уже начислена');
-    const seconds = session.deductedSeconds || SESSION_SECONDS;
-    if (seconds % SESSION_SECONDS !== 0) {
-      throw new BadRequestException('Компенсация возможна только на кратные 10 минуты сеанса');
-    }
-    const now = new Date();
-    const credited: string[] = [];
-    for (const player of session.players) {
-      await this.credit({
-        userId: player.userId,
-        seconds,
-        kind: MinuteKind.COMPENSATION,
-        source: 'compensation',
-        reason: `Компенсация за сбой сеанса ${sessionId}. ${reason}`,
-        idempotencyKey: `compensation:${sessionId}:${player.userId}`,
-        createdById: actorId,
-        sessionId,
-        expiresAt: new Date(now.getTime() + PAID_TTL_MS),
-      });
-      credited.push(player.userId);
-    }
-    await this.prisma.gameSession.update({
-      where: { id: sessionId },
-      data: { compensatedAt: now },
-    });
-    return { sessionId, credited, seconds, countsForRating: true };
-  }
-
   async launchPaidExpiry(actorId: string) {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + PAID_TTL_MS);

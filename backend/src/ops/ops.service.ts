@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { sessionOutcome } from './session-outcome';
+import { compensationNote, unplayedMinutes, validateCompensation } from './compensation-rules';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { BookingStatus, MinuteKind, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -625,7 +626,7 @@ export class OpsService {
     actorRole?: Role;
   }) {
     const page = filter.page ?? 1;
-    const take = Math.min(filter.take ?? 40, 2000);
+    const take = Math.min(filter.take ?? 200, 2000);
     let createdAt: Prisma.DateTimeFilter | undefined =
       filter.from || filter.to
         ? { ...(filter.from ? { gte: new Date(filter.from) } : {}), ...(filter.to ? { lte: new Date(filter.to) } : {}) }
@@ -654,6 +655,31 @@ export class OpsService {
       }),
       this.prisma.gameSession.count({ where }),
     ]);
+    const ids = rows.map((r) => r.id);
+    const [debits, compensations] = ids.length
+      ? await Promise.all([
+          this.prisma.minuteEntry.groupBy({
+            by: ['sessionId', 'userId'],
+            where: { sessionId: { in: ids }, type: 'DEBIT' },
+            _sum: { seconds: true },
+          }),
+          this.prisma.sessionCompensation.findMany({
+            where: { sessionId: { in: ids } },
+            orderBy: { createdAt: 'asc' },
+          }),
+        ])
+      : [[], []];
+    const actors = compensations.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: [...new Set(compensations.map((c) => c.actorId))] } },
+          select: { id: true, name: true, nickname: true },
+        })
+      : [];
+    const actorName = new Map(actors.map((a) => [a.id, a.name || a.nickname]));
+    const debitKey = (sessionId: string, userId: string) => `${sessionId}:${userId}`;
+    const debitBy = new Map(
+      debits.map((d) => [debitKey(d.sessionId ?? '', d.userId), Math.floor((d._sum.seconds ?? 0) / 60)]),
+    );
     return {
       data: rows.map((row) => ({
         id: row.id,
@@ -663,6 +689,26 @@ export class OpsService {
         mode: row.mode.name,
         players: row.players.map((p) => p.user.nickname),
         playerIds: row.players.map((p) => p.userId),
+        /** «Aza 10, Batyr 10» — сколько минут списано у каждого */
+        playerMinutes: row.players.map((p) => ({
+          userId: p.userId,
+          nickname: p.user.nickname,
+          minutes: debitBy.get(debitKey(row.id, p.userId)) ?? 0,
+        })),
+        unplayedMinutes: unplayedMinutes(row),
+        compensations: compensations
+          .filter((c) => c.sessionId === row.id)
+          .map((c) => ({
+            id: c.id,
+            createdAt: c.createdAt,
+            note: compensationNote({
+              minutes: c.minutes,
+              players: c.userIds.length,
+              actorName: actorName.get(c.actorId) ?? '—',
+              reason: c.reason,
+              comment: c.comment,
+            }),
+          })),
         paidMinutes: Math.floor(row.paidSecondsDebited / 60),
         bonusMinutes: Math.floor(row.bonusSecondsDebited / 60),
         status: row.status,
@@ -673,6 +719,82 @@ export class OpsService {
       })),
       meta: { total, page },
     };
+  }
+
+  /**
+   * Компенсация сеанса: бонусные минуты выбранным игрокам, причина из списка.
+   * Повторно по тому же сеансу — только владелец.
+   */
+  async compensateSession(input: {
+    sessionId: string;
+    userIds: string[];
+    minutes: number;
+    reason: string;
+    comment?: string;
+    actorId: string;
+    actorRole: Role;
+  }) {
+    const session = await this.prisma.gameSession.findUnique({
+      where: { id: input.sessionId },
+      include: { players: true },
+    });
+    if (!session) throw new NotFoundException('Сеанс не найден');
+    const previous = await this.prisma.sessionCompensation.count({ where: { sessionId: session.id } });
+    const userIds = [...new Set(input.userIds)];
+    const problem = validateCompensation({
+      minutes: input.minutes,
+      userIds,
+      sessionPlayerIds: session.players.map((p) => p.userId),
+      reason: input.reason,
+      comment: input.comment,
+      alreadyCompensated: previous > 0 || !!session.compensatedAt,
+      isOwner: input.actorRole === Role.ADMIN,
+    });
+    if (problem) {
+      if (problem.includes('владелец')) throw new ForbiddenException(problem);
+      throw new BadRequestException(problem);
+    }
+    const comment = input.comment?.trim() || null;
+    const record = await this.prisma.sessionCompensation.create({
+      data: {
+        sessionId: session.id,
+        actorId: input.actorId,
+        minutes: input.minutes,
+        userIds,
+        reason: input.reason,
+        comment,
+      },
+    });
+    const users = await this.prisma.user.findMany({ where: { id: { in: userIds } } });
+    const actor = await this.prisma.user.findUnique({
+      where: { id: input.actorId },
+      select: { name: true, nickname: true },
+    });
+    const note = compensationNote({
+      minutes: input.minutes,
+      players: userIds.length,
+      actorName: actor?.name || actor?.nickname || '—',
+      reason: input.reason,
+      comment,
+    });
+    for (const user of users) {
+      await this.ledger.credit({
+        userId: user.id,
+        seconds: input.minutes * 60,
+        kind: MinuteKind.BONUS,
+        source: 'compensation',
+        reason: `${note} · сеанс ${session.id}`,
+        idempotencyKey: `compensation:${record.id}:${user.id}`,
+        createdById: input.actorId,
+        sessionId: session.id,
+        tier: user.loyaltyStatus as LoyaltyTier,
+      });
+    }
+    await this.prisma.gameSession.update({
+      where: { id: session.id },
+      data: { compensatedAt: session.compensatedAt ?? new Date() },
+    });
+    return { id: record.id, note, credited: users.map((u) => u.id), minutes: input.minutes };
   }
 
   listCertificates(venueId?: string) {

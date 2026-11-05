@@ -1055,3 +1055,20 @@ model TvScreen {
   @@index([venueId])
   @@map("tv_screens")
 }
+
+/** Компенсация сеанса: бонусные минуты выбранным игрокам */
+model SessionCompensation {
+  id        String   @id @default(uuid())
+  sessionId String
+  actorId   String
+  /** Минут каждому игроку */
+  minutes   Int
+  userIds   String[] @default([])
+  /** GAME_FAILURE | EQUIPMENT_FAILURE | OTHER */
+  reason    String
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@map("session_compensations")
+}
