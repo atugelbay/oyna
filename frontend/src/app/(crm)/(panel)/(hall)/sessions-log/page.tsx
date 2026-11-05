@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
+import { sessionOutcomeLabel } from "@/lib/crm-labels";
 
 export default function SessionsLogPage() {
   const { selectedVenueId } = useCrmVenue();
@@ -59,7 +60,7 @@ export default function SessionsLogPage() {
           <p className="font-semibold">{row.room} · {row.mode}</p>
           <p>{row.start ? new Date(row.start).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" }) : "—"}{row.end ? ` – ${new Date(row.end).toLocaleTimeString("ru-RU", { timeZone: "Asia/Almaty" })}` : ""}</p>
           <p>{row.players?.join(", ") || "Гость"}</p>
-          <p>Списано {row.paidMinutes} оплаченных / {row.bonusMinutes} бонусных · {row.status}</p>
+          <p>Списано {row.paidMinutes} оплаченных / {row.bonusMinutes} бонусных · {sessionOutcomeLabel(row.outcome)}</p>
           {row.endReason && <p>Причина: {row.endReason}</p>}
           {row.compensatedAt && <p>Компенсация уже начислена</p>}
           {!row.compensatedAt && row.playerIds?.[0] && (

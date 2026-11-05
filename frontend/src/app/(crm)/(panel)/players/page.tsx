@@ -22,6 +22,7 @@ const SEGMENTS: { value: "" | Segment; label: string }[] = [
 
 const VISIT_STATUSES: { value: "" | VisitStatus; label: string }[] = [
   { value: "", label: "Все" },
+  { value: "Новый", label: "Новый" },
   { value: "Постоянный", label: "Постоянный" },
   { value: "Нечастый", label: "Нечастый" },
   { value: "Неактивный", label: "Неактивный" },
@@ -314,11 +315,11 @@ function PlayersPageContent() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-border text-left text-text-secondary">
-                <th className="py-3 px-4 font-medium">Прозвище</th>
+                <th className="py-3 px-4 font-medium">Ник</th>
                 <th className="py-3 px-4 font-medium">Контакты</th>
                 <th className="py-3 px-4 font-medium">Дата рождения</th>
                 <th className="py-3 px-4 font-medium">Статус</th>
-                <th className="py-3 px-4 font-medium">Количество сессии</th>
+                <th className="py-3 px-4 font-medium">Сеансов</th>
                 <th className="py-3 px-4 font-medium">Баланс</th>
                 <th className="py-3 px-4 font-medium">Сегмент</th>
                 <th className="py-3 px-4 w-14 text-right font-medium" aria-label="Действия" />
@@ -346,11 +347,11 @@ function PlayersPageContent() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border text-left text-text-secondary">
-                  <th className="py-3 px-4 font-medium">Прозвище</th>
+                  <th className="py-3 px-4 font-medium">Ник</th>
                   <th className="py-3 px-4 font-medium">Контакты</th>
                   <th className="py-3 px-4 font-medium">Дата рождения</th>
                   <th className="py-3 px-4 font-medium">Статус</th>
-                  <th className="py-3 px-4 font-medium">Количество сессии</th>
+                  <th className="py-3 px-4 font-medium">Сеансов</th>
                   <th className="py-3 px-4 font-medium">Баланс</th>
                   <th className="py-3 px-4 font-medium">Сегмент</th>
                   <th className="py-3 px-4 w-14 text-right font-medium" aria-label="Действия" />

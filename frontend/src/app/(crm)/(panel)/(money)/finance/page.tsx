@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
+import { formatTenge } from "@/lib/money";
 
 const MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
@@ -113,16 +114,21 @@ export default function FinancePage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl bg-bg-secondary p-4">
           <p className="text-xs text-text-secondary">Выручка</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{kpi.revenue.toLocaleString("ru-KZ")} ₸</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatTenge(kpi.revenue)}</p>
+          {current?.barterSales ? (
+            <p className="mt-1 text-xs text-text-secondary">
+              Бартер: {current.barterSales} продаж, {current.barterMinutes} минут
+            </p>
+          ) : null}
         </div>
         <div className="rounded-xl bg-bg-secondary p-4">
           <p className="text-xs text-text-secondary">Расходы</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{kpi.spent.toLocaleString("ru-KZ")} ₸</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatTenge(kpi.spent)}</p>
         </div>
         <div className="rounded-xl bg-bg-secondary p-4">
           <p className="text-xs text-text-secondary">Прибыль · маржа</p>
           <p className="mt-1 text-2xl font-bold tabular-nums">
-            {kpi.profit.toLocaleString("ru-KZ")} ₸ · {kpi.margin}%
+            {formatTenge(kpi.profit)} · {kpi.margin}%
           </p>
         </div>
         <div className="rounded-xl bg-bg-secondary p-4">
@@ -196,16 +202,20 @@ export default function FinancePage() {
                 <th>Расходы</th>
                 <th>Прибыль</th>
                 <th>Маржа</th>
+                <th>Бартер</th>
               </tr>
             </thead>
             <tbody>
               {pnl?.months?.map((row: any) => (
                 <tr key={row.month} className="border-t border-white/10">
                   <td className="p-2">{MONTHS[row.month - 1]}</td>
-                  <td className="p-2 tabular-nums">{row.revenue.toLocaleString("ru-KZ")}</td>
-                  <td className="p-2 tabular-nums">{row.expenses.toLocaleString("ru-KZ")}</td>
-                  <td className="p-2 tabular-nums">{row.profit.toLocaleString("ru-KZ")}</td>
+                  <td className="p-2 tabular-nums">{formatTenge(row.revenue)}</td>
+                  <td className="p-2 tabular-nums">{formatTenge(row.expenses)}</td>
+                  <td className="p-2 tabular-nums">{formatTenge(row.profit)}</td>
                   <td className="p-2">{row.margin}%</td>
+                  <td className="p-2 text-text-secondary">
+                    {row.barterSales ? `${row.barterSales} продаж, ${row.barterMinutes} мин` : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -242,7 +252,7 @@ export default function FinancePage() {
           {expenses.map((row) => (
             <article key={row.id} className="rounded-xl bg-bg-secondary p-3 text-sm">
               <p className="font-semibold">
-                {row.amountTenge?.toLocaleString("ru-KZ")} ₸ · {row.article}
+                {formatTenge(row.amountTenge)} · {row.article}
               </p>
               <p className="text-text-secondary">
                 {new Date(row.occurredOn).toLocaleDateString("ru-RU", { timeZone: "Asia/Almaty" })} · {row.category}
@@ -267,7 +277,7 @@ export default function FinancePage() {
                 {rooms.map((row: any, i: number) => (
                   <tr key={row.roomId || row.id || i} className="border-t border-white/10">
                     <td className="py-2">{row.roomName || row.name || "—"}</td>
-                    <td className="tabular-nums">{Number(row.revenue ?? row.totalTenge ?? 0).toLocaleString("ru-KZ")} ₸</td>
+                    <td className="tabular-nums">{formatTenge(row.revenue ?? row.totalTenge ?? 0)}</td>
                     <td>{row.sessions ?? row.count ?? "—"}</td>
                   </tr>
                 ))}

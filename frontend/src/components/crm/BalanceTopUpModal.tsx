@@ -8,6 +8,7 @@ import { balanceService } from "@/services/balance.service";
 import { promosService } from "@/services/promos.service";
 import { playersService } from "@/services/players.service";
 import { readApiUserError } from "@/lib/api-error-message";
+import { formatTenge } from "@/lib/money";
 
 type BaseTopUpMode = "packages" | "individual";
 type PaymentMethod = "cash" | "card" | "kaspi_qr";
@@ -763,7 +764,7 @@ export function BalanceTopUpPanel({
                       : "";
                   const disc =
                     computed.discountPercent > 0
-                      ? ` Скидка ${computed.discountPercent}% от ${computed.basePayBeforeDiscount} ₸.`
+                      ? ` Скидка ${computed.discountPercent}% от ${formatTenge(computed.basePayBeforeDiscount)}.`
                       : "";
                   const loyaltyPart =
                     computed.levelMinutes > 0

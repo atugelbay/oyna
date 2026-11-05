@@ -9,6 +9,7 @@ const TABS = [
   { href: "/settings/prices", label: "Цены" },
   { href: "/settings/plan", label: "План месяца" },
   { href: "/settings/loyalty", label: "Лояльность" },
+  { href: "/settings/player-status", label: "Статусы игроков" },
   { href: "/settings/employees", label: "Сотрудники" },
   { href: "/settings/audit", label: "Журнал" },
 ];

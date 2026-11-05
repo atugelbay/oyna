@@ -597,6 +597,7 @@ enum CatalogCategory {
   WATER
   OTHER
   CERTIFICATE
+  BARTER
 }
 
 enum CashMoveType {
@@ -780,6 +781,8 @@ model Sale {
   receiptNumber     String?
   comment           String?
   enteredAfterOutage Boolean   @default(false)
+  /** Бартер: 0 ₸ по договору, в выручку не входит, показывается отдельной строкой */
+  isBarter          Boolean    @default(false)
   cancelReason      String?
   cancelledById     String?
   cancelledAt       DateTime?

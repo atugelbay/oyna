@@ -7,6 +7,14 @@ import {
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  parseVisitRules,
+  VISIT_RULES_KEY,
+  visitStatus,
+  type VisitInfo,
+  type VisitRules,
+  type VisitStatus,
+} from './visit-status';
 
 @Injectable()
 export class UsersService {
@@ -26,7 +34,8 @@ export class UsersService {
       throw new NotFoundException('Пользователь не найден');
     }
 
-    return this.formatUser(user);
+    const [status] = await this.visitStatuses([user]);
+    return this.formatUser(user, status);
   }
 
   async search(query: string, page = 1, limit = 20, filter?: string) {
@@ -89,8 +98,9 @@ export class UsersService {
       const order = new Map(ids.map((id, i) => [id, i]));
       users.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 
+      const statuses = await this.visitStatuses(users);
       return {
-        data: users.map((u) => this.formatUser(u)),
+        data: users.map((u, i) => this.formatUser(u, statuses[i])),
         meta: {
           total,
           page,
@@ -131,8 +141,9 @@ export class UsersService {
       this.prisma.user.count({ where }),
     ]);
 
+    const statuses = await this.visitStatuses(users);
     return {
-      data: users.map((u) => this.formatUser(u)),
+      data: users.map((u, i) => this.formatUser(u, statuses[i])),
       meta: { total, page, limit, pages: Math.ceil(total / limit) || (total ? 1 : 0) },
     };
   }
@@ -170,7 +181,8 @@ export class UsersService {
       include: { balance: true, sessions: true },
     });
 
-    return this.formatUser(user);
+    const [status] = await this.visitStatuses([user]);
+    return this.formatUser(user, status);
   }
 
   async getStats(venueId?: string) {
@@ -224,13 +236,66 @@ export class UsersService {
     return `${age} лет`;
   }
 
-  private computeVisitStatus(sessionsCount: number): string {
-    if (sessionsCount >= 10) return 'Постоянный';
-    if (sessionsCount >= 3) return 'Нечастый';
-    return 'Неактивный';
+  async getVisitRules(): Promise<VisitRules> {
+    const row = await this.prisma.appSetting.findUnique({ where: { key: VISIT_RULES_KEY } });
+    return parseVisitRules(row?.value);
   }
 
-  private formatUser(user: any) {
+  async setVisitRules(rules: VisitRules): Promise<VisitRules> {
+    const value = JSON.stringify({
+      newDays: rules.newDays,
+      windowDays: rules.windowDays,
+      regularVisits: rules.regularVisits,
+    });
+    await this.prisma.appSetting.upsert({
+      where: { key: VISIT_RULES_KEY },
+      create: { key: VISIT_RULES_KEY, value },
+      update: { value },
+    });
+    return parseVisitRules(value);
+  }
+
+  /**
+   * Статус по визитам. Визит — день по Алматы, в который у игрока был хотя бы один сеанс.
+   * Считается при каждом запросе, поэтому всегда актуален после сеанса и со сменой суток.
+   */
+  private async visitStatuses(users: { id: string; createdAt: Date }[]): Promise<VisitStatus[]> {
+    if (!users.length) return [];
+    const rules = await this.getVisitRules();
+    const ids = users.map((u) => u.id);
+    const rows = await this.prisma.$queryRaw<
+      { uid: string; first_ago: number; recent: number; today: Date }[]
+    >`
+      WITH today AS (
+        SELECT (now() AT TIME ZONE 'Asia/Almaty')::date AS d
+      ), days AS (
+        SELECT DISTINCT gsp."userId" AS uid,
+          ((COALESCE(gs."startTime", gs."createdAt") AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Almaty')::date AS day
+        FROM "game_session_players" gsp
+        INNER JOIN "game_sessions" gs ON gs.id = gsp."sessionId"
+        WHERE gsp."userId" IN (${Prisma.join(ids)})
+          AND gs.status IN ('ACTIVE', 'COMPLETED')
+      )
+      SELECT days.uid,
+        (today.d - MIN(days.day))::int AS first_ago,
+        (COUNT(*) FILTER (WHERE days.day > today.d - ${rules.windowDays}::int))::int AS recent
+      FROM days CROSS JOIN today
+      GROUP BY days.uid, today.d
+    `;
+    const byUser = new Map(rows.map((r) => [r.uid, r]));
+    const now = Date.now();
+    return users.map((u) => {
+      const row = byUser.get(u.id);
+      const info: VisitInfo = {
+        firstVisitDaysAgo: row ? Number(row.first_ago) : null,
+        recentVisits: row ? Number(row.recent) : 0,
+        registeredDaysAgo: Math.floor((now - u.createdAt.getTime()) / 86400000),
+      };
+      return visitStatus(info, rules);
+    });
+  }
+
+  private formatUser(user: any, status: VisitStatus) {
     const sessionsCount = user.sessions?.length ?? 0;
     const balanceSeconds = user.balance?.availableSeconds ?? 0;
 
@@ -249,7 +314,7 @@ export class UsersService {
       balanceSeconds,
       balanceMinutes: Math.floor(balanceSeconds / 60),
       sessionsCount,
-      status: this.computeVisitStatus(sessionsCount),
+      status,
       createdAt: user.createdAt,
       transactions: user.transactions,
     };

@@ -1,5 +1,5 @@
 export type Segment = "GOLD" | "SILVER" | "BRONZE";
-export type VisitStatus = "Постоянный" | "Нечастый" | "Неактивный";
+export type VisitStatus = "Новый" | "Постоянный" | "Нечастый" | "Неактивный";
 
 export interface Player {
   id: string;

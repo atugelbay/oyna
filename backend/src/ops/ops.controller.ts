@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Header, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { SESSION_OUTCOME_LABEL } from './session-outcome';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { BookingStatus, Role } from '@prisma/client';
@@ -70,7 +71,7 @@ export class OpsController {
         row.players.join(', '),
         row.paidMinutes,
         row.bonusMinutes,
-        row.status,
+        SESSION_OUTCOME_LABEL[row.outcome],
         row.endReason ?? '',
       ]),
     );

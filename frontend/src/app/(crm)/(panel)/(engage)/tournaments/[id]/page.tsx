@@ -270,7 +270,7 @@ export default function TournamentDetailPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-surface-border text-left text-text-secondary">
-                        <th className="py-2 px-3 font-medium">Прозвище</th>
+                        <th className="py-2 px-3 font-medium">Ник</th>
                         <th className="py-2 px-3 font-medium">Контакты</th>
                         <th className="py-2 px-3 font-medium">Дата рождения</th>
                         <th className="py-2 px-3 font-medium">Сегмент</th>

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
-import { payMethodLabel, saleStatusLabel } from "@/lib/crm-labels";
+import { CATALOG_CATEGORY_LABEL, payMethodLabel, saleStatusLabel } from "@/lib/crm-labels";
+import { formatTenge } from "@/lib/money";
 
 type CatalogItem = {
   id: string;
@@ -34,7 +35,11 @@ type CartLine = {
   qty: number;
   priceTenge: number;
   minutes: number;
+  barter: boolean;
 };
+
+/** Порядок групп плиток в кассе */
+const CATEGORY_ORDER = ["GAMES", "PROMO", "PACKAGES", "CERTIFICATE", "WATER", "OTHER", "BARTER"];
 
 type PayMethod = "CASH" | "KASPI" | "HALYK" | "FREEDOM";
 
@@ -62,6 +67,8 @@ export default function CashPage() {
   const [moveType, setMoveType] = useState<"IN" | "OUT" | "EXPENSE">("OUT");
   const [moveAmount, setMoveAmount] = useState("");
   const [moveComment, setMoveComment] = useState("");
+  const [barterComment, setBarterComment] = useState("");
+  const [shiftBarter, setShiftBarter] = useState<{ sales: number; minutes: number } | null>(null);
   const [closeForm, setCloseForm] = useState({
     cash: "",
     kaspi: "",
@@ -74,6 +81,20 @@ export default function CashPage() {
 
   const total = useMemo(() => cart.reduce((s, l) => s + l.priceTenge * l.qty, 0), [cart]);
   const minutes = useMemo(() => cart.reduce((s, l) => s + l.minutes * l.qty, 0), [cart]);
+  const isBarter = cart.length > 0 && cart.every((l) => l.barter);
+  const catalogGroups = useMemo(() => {
+    const groups = new Map<string, CatalogItem[]>();
+    for (const item of catalog) {
+      const list = groups.get(item.category) ?? [];
+      list.push(item);
+      groups.set(item.category, list);
+    }
+    const rank = (c: string) => {
+      const i = CATEGORY_ORDER.indexOf(c);
+      return i === -1 ? CATEGORY_ORDER.length : i;
+    };
+    return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b));
+  }, [catalog]);
   const change =
     method === "CASH" && cashReceived !== ""
       ? Math.max(0, Number(cashReceived) - total)
@@ -91,6 +112,7 @@ export default function CashPage() {
       try {
         const { data: report } = await api.get(`/cash/shifts/${current.id}/report`);
         setExpected(report.expected);
+        setShiftBarter(report.barter ?? null);
         setCloseForm((f) => ({
           ...f,
           cash: String(report.expected?.cash ?? ""),
@@ -100,9 +122,11 @@ export default function CashPage() {
         }));
       } catch {
         setExpected(null);
+        setShiftBarter(null);
       }
     } else {
       setExpected(null);
+      setShiftBarter(null);
     }
   }, [selectedVenueId]);
 
@@ -151,6 +175,12 @@ export default function CashPage() {
   }
 
   function addItem(item: CatalogItem) {
+    const barter = item.category === "BARTER";
+    if (cart.length > 0 && cart.some((l) => l.barter) !== barter) {
+      setError("Бартер проводится отдельным чеком");
+      return;
+    }
+    setError("");
     setCart((prev) => {
       const key = item.id;
       const found = prev.find((l) => l.key === key);
@@ -166,6 +196,7 @@ export default function CashPage() {
           qty: 1,
           priceTenge: catalogPrice(item),
           minutes: item.minutes ?? 0,
+          barter,
         },
       ];
     });
@@ -190,7 +221,12 @@ export default function CashPage() {
       setError("Минуты нужно начислить игроку — найдите аккаунт");
       return;
     }
-    if (method === "CASH") {
+    if (isBarter) {
+      if (!barterComment.trim()) {
+        setError("Бартер: напишите, кто и по какому договору");
+        return;
+      }
+    } else if (method === "CASH") {
       const received = Number(cashReceived);
       if (!Number.isFinite(received) || received < total) {
         setError("Укажите полученные наличные не меньше итога");
@@ -221,18 +257,28 @@ export default function CashPage() {
           priceTenge: l.priceTenge,
           minutes: l.minutes,
         })),
-        payments: [
-          {
-            method,
-            amountTenge: total,
-            cashReceived: method === "CASH" ? Number(cashReceived) : undefined,
-          },
-        ],
-        receiptChecked: method === "CASH" ? true : receiptChecked,
+        payments:
+          isBarter && total === 0
+            ? []
+            : [
+                {
+                  method,
+                  amountTenge: total,
+                  cashReceived: method === "CASH" ? Number(cashReceived) : undefined,
+                },
+              ],
+        receiptChecked: isBarter || method === "CASH" ? true : receiptChecked,
+        comment: isBarter ? barterComment.trim() : undefined,
       });
       setLastSaleTotal(total);
-      setBanner({ saleId: data.id, text: `Оплата проведена · ${data.totalTenge} ₸` });
+      setBanner({
+        saleId: data.id,
+        text: isBarter
+          ? `Бартер проведён · ${data.minutesCredited} мин`
+          : `Оплата проведена · ${formatTenge(data.totalTenge)}`,
+      });
       setCart([]);
+      setBarterComment("");
       setCashReceived("");
       setReceiptChecked(false);
       setConfirmOpen(false);
@@ -263,13 +309,17 @@ export default function CashPage() {
 
   async function moveCash() {
     if (!shift?.id) return;
+    if (!moveComment.trim()) {
+      setError("Напишите комментарий: откуда или куда деньги");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       await api.post(`/cash/shifts/${shift.id}/movements`, {
         type: moveType,
         amount: Number(moveAmount),
-        comment: moveComment || undefined,
+        comment: moveComment.trim(),
         article: moveType === "EXPENSE" ? "Расход из кассы" : undefined,
       });
       setMoveAmount("");
@@ -400,21 +450,28 @@ export default function CashPage() {
 
             <div>
               <p className="mb-2 text-xs uppercase tracking-wide text-text-muted">2. Товары</p>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {catalog.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => addItem(item)}
-                    className="rounded-xl bg-bg-card p-3 text-left hover:bg-white/10"
-                  >
-                    <p className="text-sm font-semibold leading-snug">{item.name}</p>
-                    <p className="mt-1 text-xs text-text-secondary">
-                      {catalogPrice(item)} ₸
-                      {item.minutes ? ` · ${item.minutes} мин` : ""}
-                      {isAlmatyWeekend() ? " · выходной" : ""}
-                    </p>
-                  </button>
+              <div className="space-y-3">
+                {catalogGroups.map(([category, items]) => (
+                  <div key={category}>
+                    <p className="mb-1 text-xs text-text-secondary">{CATALOG_CATEGORY_LABEL[category] ?? category}</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {items.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => addItem(item)}
+                          className="rounded-xl bg-bg-card p-3 text-left hover:bg-white/10"
+                        >
+                          <p className="text-sm font-semibold leading-snug">{item.name}</p>
+                          <p className="mt-1 text-xs text-text-secondary">
+                            {formatTenge(catalogPrice(item))}
+                            {item.minutes ? ` · ${item.minutes} мин` : ""}
+                            {isAlmatyWeekend() && item.category !== "BARTER" ? " · выходной" : ""}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
@@ -432,7 +489,7 @@ export default function CashPage() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{line.name}</p>
                         <p className="text-xs text-text-secondary">
-                          {line.priceTenge} ₸
+                          {formatTenge(line.priceTenge)}
                           {line.minutes ? ` · ${line.minutes} мин` : ""}
                         </p>
                       </div>
@@ -457,7 +514,7 @@ export default function CashPage() {
                   ))}
                 </ul>
               )}
-              <p className="mt-3 text-lg font-bold tabular-nums">{total} ₸</p>
+              <p className="mt-3 text-lg font-bold tabular-nums">{isBarter ? "Бартер" : formatTenge(total)}</p>
               {minutes > 0 ? (
                 <p className="text-sm text-cyan">+{minutes} мин игроку, действуют 24 ч</p>
               ) : null}
@@ -465,6 +522,19 @@ export default function CashPage() {
 
             <div>
               <p className="mb-2 text-xs uppercase tracking-wide text-text-muted">4. Оплата</p>
+              {isBarter ? (
+                <label className="mb-3 block text-sm">
+                  Кто / по какому договору
+                  <input
+                    value={barterComment}
+                    onChange={(e) => setBarterComment(e.target.value)}
+                    placeholder="Например: RC Race Lab, договор №3 от 01.10"
+                    className="mt-1 h-12 w-full rounded-xl bg-bg-card px-3 text-base"
+                  />
+                  <span className="mt-1 block text-xs text-text-secondary">Без денег, в выручку не входит</span>
+                </label>
+              ) : (
+              <>
               <div className="mb-3 flex flex-wrap gap-2">
                 {METHODS.map((m) => (
                   <button
@@ -487,7 +557,7 @@ export default function CashPage() {
                     className="mt-1 h-12 w-full rounded-xl bg-bg-card px-3 text-base"
                   />
                   {cashReceived !== "" ? (
-                    <span className="mt-1 block text-xs text-text-secondary">Сдача {change} ₸</span>
+                    <span className="mt-1 block text-xs text-text-secondary">Сдача {formatTenge(change)}</span>
                   ) : null}
                 </label>
               ) : (
@@ -500,6 +570,8 @@ export default function CashPage() {
                   />
                   Терминал: Одобрено / чек Веб-кассы пробит
                 </label>
+              )}
+              </>
               )}
               <button
                 type="button"
@@ -522,12 +594,14 @@ export default function CashPage() {
                   <li key={sale.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-bg-card px-3 py-2 text-sm">
                     <div>
                       <p className="font-medium">
-                        №{sale.number} · {sale.totalTenge} ₸ · {saleStatusLabel(sale.status)}
+                        №{sale.number} · {sale.isBarter ? `Бартер · ${sale.minutesCredited} мин` : formatTenge(sale.totalTenge)} · {saleStatusLabel(sale.status)}
                       </p>
                       <p className="text-xs text-text-secondary">
                         {sale.lines?.map((l: any) => `${l.name}×${l.qty}`).join(", ")}
                         {" · "}
-                        {sale.payments?.map((p: any) => `${payMethodLabel(p.method)} ${p.amountTenge}`).join(", ")}
+                        {sale.isBarter
+                          ? sale.comment || "Бартер"
+                          : sale.payments?.map((p: any) => `${payMethodLabel(p.method)} ${formatTenge(p.amountTenge)}`).join(", ")}
                       </p>
                     </div>
                     {sale.status !== "CANCELLED" ? (
@@ -580,14 +654,14 @@ export default function CashPage() {
               className="h-12 w-full rounded-xl bg-bg-card px-3"
             />
             <input
-              placeholder="Комментарий"
+              placeholder="Комментарий (обязательно): откуда или куда деньги"
               value={moveComment}
               onChange={(e) => setMoveComment(e.target.value)}
               className="h-12 w-full rounded-xl bg-bg-card px-3"
             />
             <button
               type="button"
-              disabled={busy || !moveAmount}
+              disabled={busy || !moveAmount || !moveComment.trim()}
               onClick={moveCash}
               className="min-h-12 rounded-xl bg-bg-card px-4 font-semibold disabled:opacity-50"
             >
@@ -618,7 +692,7 @@ export default function CashPage() {
                     ).map(([key, label, value, setValue]) => (
                       <tr key={key} className="border-t border-white/10">
                         <td className="py-2">{label}</td>
-                        <td className="tabular-nums">{expected[key] ?? 0}</td>
+                        <td className="tabular-nums">{formatTenge(expected[key] ?? 0)}</td>
                         <td>
                           <input
                             inputMode="numeric"
@@ -632,6 +706,11 @@ export default function CashPage() {
                   </tbody>
                 </table>
               </div>
+            ) : null}
+            {shiftBarter && shiftBarter.sales > 0 ? (
+              <p className="text-sm text-text-secondary">
+                Бартер: {shiftBarter.sales} продаж, {shiftBarter.minutes} минут
+              </p>
             ) : null}
             <input
               placeholder="Комментарий при расхождении"
@@ -658,9 +737,9 @@ export default function CashPage() {
             <p className="mt-2 text-sm text-text-secondary">
               {cart.map((l) => `${l.name} × ${l.qty}`).join(", ")}
             </p>
-            <p className="mt-3 text-2xl font-bold tabular-nums">{total} ₸</p>
+            <p className="mt-3 text-2xl font-bold tabular-nums">{isBarter ? "Бартер" : formatTenge(total)}</p>
             <p className="text-sm text-text-secondary">
-              {payMethodLabel(method)}
+              {isBarter ? barterComment : payMethodLabel(method)}
               {player ? ` · ${player.nickname}` : ""}
               {minutes ? ` · +${minutes} мин` : ""}
             </p>

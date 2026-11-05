@@ -3,6 +3,13 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
+import { formatTenge } from "@/lib/money";
+
+const CERTIFICATE_STATUS_LABEL: Record<string, string> = {
+  SOLD: "Продан",
+  ACTIVATED: "Активирован",
+  EXPIRED: "Истёк",
+};
 
 export default function CertificatesPage() {
   const { selectedVenueId } = useCrmVenue();
@@ -62,8 +69,8 @@ export default function CertificatesPage() {
       </div>
       {rows.map((row) => (
         <article key={row.id} className="rounded-xl bg-bg-secondary p-3 text-sm">
-          <p className="font-semibold">{row.code} · {row.minutes} мин · {row.priceTenge} ₸</p>
-          <p>{row.status} · активировать до {new Date(row.activateBy).toLocaleDateString("ru-RU", { timeZone: "Asia/Almaty" })}</p>
+          <p className="font-semibold">{row.code} · {row.minutes} мин · {formatTenge(row.priceTenge)}</p>
+          <p>{CERTIFICATE_STATUS_LABEL[row.status] ?? row.status} · активировать до {new Date(row.activateBy).toLocaleDateString("ru-RU", { timeZone: "Asia/Almaty" })}</p>
         </article>
       ))}
     </div>

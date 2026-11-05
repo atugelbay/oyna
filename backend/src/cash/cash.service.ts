@@ -115,10 +115,13 @@ export class CashService {
       where: { venueId: dto.venueId, status: 'OPEN' },
     });
     if (!shift) throw new BadRequestException('Откройте смену');
+    const isBarter = await this.checkBarter(dto);
     const total = dto.lines.reduce((s, l) => s + l.priceTenge * l.qty, 0);
     const paid = dto.payments.reduce((s, p) => s + p.amountTenge, 0);
     if (total !== paid) throw new BadRequestException('Сумма оплат не равна итогу');
-    if (!dto.payments.length) throw new BadRequestException('Нужен способ оплаты');
+    if (!dto.payments.length && !(isBarter && total === 0)) {
+      throw new BadRequestException('Нужен способ оплаты');
+    }
     for (const pay of dto.payments) {
       if (pay.method === 'CASH' && pay.cashReceived != null && pay.cashReceived < pay.amountTenge) {
         throw new BadRequestException('Полученных наличных меньше суммы');
@@ -143,8 +146,9 @@ export class CashService {
         minutesCredited: minutes,
         receiptChecked: dto.receiptChecked ?? false,
         receiptNumber: dto.receiptNumber,
-        comment: dto.comment,
+        comment: dto.comment?.trim() || undefined,
         enteredAfterOutage: dto.enteredAfterOutage ?? false,
+        isBarter,
         lines: {
           create: dto.lines.map((l) => ({
             itemId: l.itemId,
@@ -261,13 +265,15 @@ export class CashService {
   async move(shiftId: string, dto: CashMoveDto, operatorId: string) {
     const shift = await this.mustShift(shiftId);
     if (shift.status !== 'OPEN') throw new BadRequestException('Смена закрыта');
+    const comment = dto.comment?.trim();
+    if (!comment) throw new BadRequestException('Напишите комментарий к движению денег');
     const movement = await this.prisma.cashMovement.create({
       data: {
         shiftId,
         type: dto.type as CashMoveType,
         amount: dto.amount,
         article: dto.article,
-        comment: dto.comment,
+        comment,
         operatorId,
       },
     });
@@ -279,7 +285,7 @@ export class CashService {
           amountTenge: dto.amount,
           category: 'Прочее',
           article: dto.article || 'Расход из кассы',
-          comment: `Из кассы смены №${shift.number}. ${dto.comment ?? ''}`,
+          comment: `Из кассы смены №${shift.number}. ${comment}`,
           payMethod: 'CASH_REGISTER',
           shiftId: shift.id,
           createdById: operatorId,
@@ -372,8 +378,18 @@ export class CashService {
     });
     if (!shift) throw new NotFoundException('Смена не найдена');
     const expected = await this.expected(shift.id, shift.openingCash);
-    const unchecked = shift.sales.filter((s) => s.status === 'COMPLETED' && !s.receiptChecked).length;
-    return { shift, expected, uncheckedReceipts: unchecked };
+    const completed = shift.sales.filter((s) => s.status === 'COMPLETED');
+    const unchecked = completed.filter((s) => !s.isBarter && !s.receiptChecked).length;
+    const barterSales = completed.filter((s) => s.isBarter);
+    return {
+      shift,
+      expected,
+      uncheckedReceipts: unchecked,
+      barter: {
+        sales: barterSales.length,
+        minutes: barterSales.reduce((sum, s) => sum + s.minutesCredited, 0),
+      },
+    };
   }
 
   async discrepancies(venueId?: string) {
@@ -422,11 +438,14 @@ export class CashService {
     for (const pkg of packages) {
       const name = pkg.name?.trim() || `${pkg.minutes} мин`;
       const weekend = pkg.costWeekendTenge ?? pkg.costTenge;
+      // Тариф за 0 ₸ — бартер (например, RC Race Lab), отдельная группа в кассе
+      const category = pkg.costTenge === 0 && weekend === 0 ? 'BARTER' : 'GAMES';
       const existing = await this.prisma.catalogItem.findFirst({
-        where: { venueId, name, category: 'GAMES' },
+        where: { venueId, name, category: { in: ['GAMES', 'BARTER'] } },
       });
       if (existing) {
         if (
+          existing.category !== category ||
           existing.priceTenge !== pkg.costTenge ||
           existing.priceWeekendTenge !== weekend ||
           existing.minutes !== pkg.minutes
@@ -434,6 +453,7 @@ export class CashService {
           await this.prisma.catalogItem.update({
             where: { id: existing.id },
             data: {
+              category,
               priceTenge: pkg.costTenge,
               priceWeekendTenge: weekend,
               minutes: pkg.minutes,
@@ -447,7 +467,7 @@ export class CashService {
         data: {
           venueId,
           name,
-          category: 'GAMES',
+          category,
           priceTenge: pkg.costTenge,
           priceWeekendTenge: weekend,
           minutes: pkg.minutes,
@@ -550,6 +570,25 @@ export class CashService {
       if (move.type === 'OUT' || move.type === 'EXPENSE') by.cash -= move.amount;
     }
     return by;
+  }
+
+  /** Бартер — отдельный чек только из бартерных позиций, с комментарием «кто / по какому договору». */
+  private async checkBarter(dto: CreateSaleDto) {
+    const ids = [...new Set(dto.lines.map((l) => l.itemId).filter((id): id is string => !!id))];
+    if (!ids.length) return false;
+    const barter = await this.prisma.catalogItem.findMany({
+      where: { id: { in: ids }, category: 'BARTER' },
+      select: { id: true },
+    });
+    if (!barter.length) return false;
+    const barterIds = new Set(barter.map((b) => b.id));
+    if (dto.lines.some((l) => !l.itemId || !barterIds.has(l.itemId))) {
+      throw new BadRequestException('Бартер проводится отдельным чеком');
+    }
+    if (!dto.comment?.trim()) {
+      throw new BadRequestException('Бартер: напишите, кто и по какому договору');
+    }
+    return true;
   }
 
   private async mustShift(id: string) {

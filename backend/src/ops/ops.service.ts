@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { sessionOutcome } from './session-outcome';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { BookingStatus, MinuteKind, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -258,12 +259,17 @@ export class OpsService {
       profit: number;
       margin: number;
       running: number;
+      barterSales: number;
+      barterMinutes: number;
     }[] = [];
     let running = 0;
     for (let m = 1; m <= 12; m++) {
-      const revenue = sales
-        .filter((s) => almatyParts(s.createdAt).month === m && almatyParts(s.createdAt).year === year)
-        .reduce((sum, s) => sum + s.totalTenge, 0);
+      const inMonth = sales.filter(
+        (s) => almatyParts(s.createdAt).month === m && almatyParts(s.createdAt).year === year,
+      );
+      // Бартер в выручку не входит, показывается отдельной строкой
+      const barter = inMonth.filter((s) => s.isBarter);
+      const revenue = inMonth.filter((s) => !s.isBarter).reduce((sum, s) => sum + s.totalTenge, 0);
       const spent = expenses
         .filter((e) => almatyParts(e.occurredOn).month === m)
         .reduce((sum, e) => sum + e.amountTenge, 0);
@@ -276,6 +282,8 @@ export class OpsService {
         profit,
         margin: revenue ? Math.round((profit / revenue) * 100) : 0,
         running,
+        barterSales: barter.length,
+        barterMinutes: barter.reduce((sum, s) => sum + s.minutesCredited, 0),
       });
     }
     return { year, months };
@@ -657,6 +665,7 @@ export class OpsService {
         paidMinutes: Math.floor(row.paidSecondsDebited / 60),
         bonusMinutes: Math.floor(row.bonusSecondsDebited / 60),
         status: row.status,
+        outcome: sessionOutcome(row),
         endReason: row.endReason,
         scores: row.scores,
         compensatedAt: row.compensatedAt,

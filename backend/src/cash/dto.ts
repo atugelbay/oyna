@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
@@ -134,9 +135,10 @@ export class CashMoveDto {
   @IsString()
   article?: string;
 
-  @IsOptional()
+  /** Обязательно: откуда/куда деньги (например, «наличные до CRM») */
   @IsString()
-  comment?: string;
+  @IsNotEmpty({ message: 'Напишите комментарий к движению денег' })
+  comment: string;
 }
 
 export class CatalogDto {
@@ -147,8 +149,8 @@ export class CatalogDto {
   @IsString()
   name: string;
 
-  @IsIn(['GAMES', 'PACKAGES', 'PROMO', 'WATER', 'OTHER', 'CERTIFICATE'])
-  category: 'GAMES' | 'PACKAGES' | 'PROMO' | 'WATER' | 'OTHER' | 'CERTIFICATE';
+  @IsIn(['GAMES', 'PACKAGES', 'PROMO', 'WATER', 'OTHER', 'CERTIFICATE', 'BARTER'])
+  category: 'GAMES' | 'PACKAGES' | 'PROMO' | 'WATER' | 'OTHER' | 'CERTIFICATE' | 'BARTER';
 
   @IsInt()
   @Min(0)

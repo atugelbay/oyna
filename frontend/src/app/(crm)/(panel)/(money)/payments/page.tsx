@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import { useCrmVenue } from "@/lib/venue-context";
 import { payMethodLabel, saleStatusLabel } from "@/lib/crm-labels";
+import { formatTenge } from "@/lib/money";
 
 const METHODS = ["", "CASH", "KASPI", "HALYK", "FREEDOM"] as const;
 
@@ -137,13 +138,13 @@ export default function PaymentsPage() {
 
       {totals ? (
         <p className="text-sm text-text-secondary">
-          {totals.count} оплат · {totals.sum} ₸ · средний {totals.average} ₸
+          {totals.count} оплат · {formatTenge(totals.sum)} · средний {formatTenge(totals.average)}
         </p>
       ) : null}
       <p className="text-sm text-text-secondary">
         {Object.entries(byMethod)
           .filter(([, sum]) => sum > 0)
-          .map(([m, sum]) => `${payMethodLabel(m)} ${sum} ₸`)
+          .map(([m, sum]) => `${payMethodLabel(m)} ${formatTenge(sum as number)}`)
           .join(" · ") || "Нет проведённых оплат в выборке"}
       </p>
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
@@ -157,7 +158,7 @@ export default function PaymentsPage() {
             className="flex w-full flex-col gap-1 rounded-xl bg-bg-secondary p-3 text-left text-sm hover:bg-white/5"
           >
             <span className="font-semibold">
-              №{row.number} · {row.totalTenge} ₸ · {saleStatusLabel(row.status)}
+              №{row.number} · {row.isBarter ? "Бартер" : formatTenge(row.totalTenge)} · {saleStatusLabel(row.status)}
             </span>
             <span className="text-text-secondary">
               {new Date(row.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })} · {row.operatorName}
@@ -177,7 +178,7 @@ export default function PaymentsPage() {
             <p className="mt-1 text-sm text-text-secondary">
               {saleStatusLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}
             </p>
-            <p className="mt-3 text-2xl font-bold tabular-nums">{selected.totalTenge} ₸</p>
+            <p className="mt-3 text-2xl font-bold tabular-nums">{formatTenge(selected.totalTenge)}</p>
             <div className="mt-4 space-y-2 text-sm">
               <p>Оператор: {selected.operatorName}</p>
               <p>Смена: {selected.shift?.number ?? "—"}</p>
@@ -188,7 +189,7 @@ export default function PaymentsPage() {
               <ul className="list-disc pl-5">
                 {(selected.lines ?? []).map((l: any) => (
                   <li key={l.id}>
-                    {l.name} × {l.qty} — {l.priceTenge * l.qty} ₸
+                    {l.name} × {l.qty} — {formatTenge(l.priceTenge * l.qty)}
                     {l.minutes ? ` · ${l.minutes * l.qty} мин` : ""}
                   </li>
                 ))}
@@ -197,7 +198,7 @@ export default function PaymentsPage() {
               <ul className="list-disc pl-5">
                 {(selected.payments ?? []).map((p: any) => (
                   <li key={p.id}>
-                    {payMethodLabel(p.method)} {p.amountTenge} ₸
+                    {payMethodLabel(p.method)} {formatTenge(p.amountTenge)}
                     {p.changeTenge != null ? ` · сдача ${p.changeTenge}` : ""}
                   </li>
                 ))}

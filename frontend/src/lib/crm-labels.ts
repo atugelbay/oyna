@@ -33,3 +33,27 @@ export function bookingStatusLabel(status?: string | null) {
   if (!status) return "—";
   return BOOKING_STATUS_LABEL[status] ?? status;
 }
+
+export const SESSION_OUTCOME_LABEL: Record<string, string> = {
+  PENDING: "Ожидает",
+  ACTIVE: "Идёт",
+  COMPLETED: "Завершён",
+  INTERRUPTED: "Прерван",
+  COMPENSATED: "Компенсирован",
+  CANCELLED: "Отменён",
+};
+
+export function sessionOutcomeLabel(outcome?: string | null) {
+  if (!outcome) return "—";
+  return SESSION_OUTCOME_LABEL[outcome] ?? outcome;
+}
+
+export const CATALOG_CATEGORY_LABEL: Record<string, string> = {
+  GAMES: "Игра",
+  PACKAGES: "Пакеты",
+  PROMO: "Акции",
+  CERTIFICATE: "Сертификаты",
+  WATER: "Товары",
+  OTHER: "Прочее",
+  BARTER: "Бартер",
+};

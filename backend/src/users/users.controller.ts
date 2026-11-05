@@ -18,6 +18,7 @@ import {
 import { Role } from '@prisma/client';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { VisitRulesDto } from './visit-status';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards';
 import { Roles, CurrentUser } from '../common/decorators';
@@ -41,6 +42,20 @@ export class UsersController {
   @ApiQuery({ name: 'venueId', required: false })
   getStats(@Query('venueId') venueId?: string) {
     return this.usersService.getStats(venueId);
+  }
+
+  @Get('visit-rules')
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  @ApiOperation({ summary: 'Пороги статусов игрока (Новый / Постоянный / Нечастый / Неактивный)' })
+  getVisitRules() {
+    return this.usersService.getVisitRules();
+  }
+
+  @Patch('visit-rules')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Изменить пороги статусов игрока (только владелец)' })
+  setVisitRules(@Body() dto: VisitRulesDto) {
+    return this.usersService.setVisitRules(dto);
   }
 
   @Get('search')
