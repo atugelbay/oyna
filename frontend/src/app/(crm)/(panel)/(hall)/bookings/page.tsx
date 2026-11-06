@@ -7,6 +7,7 @@ import { bookingStatusLabel } from "@/lib/crm-labels";
 import { almatyRange, almatyToday } from "@/lib/almaty";
 import { formatTenge } from "@/lib/money";
 import { BookingCalendar, almatyDayKey } from "@/components/crm/BookingCalendar";
+import { BookingDayPanel } from "@/components/crm/BookingDayPanel";
 
 const BIRTHDAY_PACKAGES = [
   { name: "START", minutes: 40, price: 50000 },
@@ -46,6 +47,7 @@ export default function BookingsPage() {
   const today = almatyToday();
   const [month, setMonth] = useState(today.slice(0, 7));
   const [selectedDay, setSelectedDay] = useState(today);
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
   const [form, setForm] = useState({
     type: "BIRTHDAY" as "BIRTHDAY" | "TEAMBUILDING",
     startsAt: "",
@@ -379,7 +381,15 @@ export default function BookingsPage() {
                   {bookingStatusLabel(status)}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setDayOpen(dayOpen === row.id ? null : row.id)}
+                className={`min-h-10 rounded-lg px-2 text-xs ${dayOpen === row.id ? "bg-amber-400 text-black" : "bg-bg-card"}`}
+              >
+                День праздника
+              </button>
             </div>
+            {dayOpen === row.id ? <BookingDayPanel booking={row} onChanged={() => void load()} /> : null}
           </article>
         ))}
       </div>

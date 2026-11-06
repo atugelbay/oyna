@@ -122,8 +122,14 @@ export class OpsController {
 
   @Post('bookings/:id/credit')
   @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
-  credit(@Param('id') id: string, @CurrentUser('id') actorId: string) {
-    return this.ops.creditBooking(id, actorId);
+  credit(@Param('id') id: string, @CurrentUser('id') actorId: string, @CurrentUser('role') role: Role) {
+    return this.ops.creditBooking(id, actorId, role);
+  }
+
+  @Post('bookings/:id/participants/:participantId/remove')
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  removeParticipant(@Param('id') id: string, @Param('participantId') participantId: string) {
+    return this.ops.removeParticipant(id, participantId);
   }
 
   @Post('expenses')
@@ -231,6 +237,12 @@ export class OpsController {
   @Roles(Role.ADMIN)
   attendance(@Query('venueId') venueId: string, @Query('from') from: string, @Query('to') to: string) {
     return this.ops.attendance(venueId, from, to);
+  }
+
+  @Get('players/:id/card')
+  @Roles(Role.OPERATOR, Role.MANAGER, Role.ADMIN)
+  playerCard(@Param('id') id: string) {
+    return this.ops.playerCard(id);
   }
 
   @Post('players/:id/phone-change')

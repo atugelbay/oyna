@@ -23,6 +23,7 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
 import { OpsModule } from './ops/ops.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { TeamModule } from './team/team.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { TeamModule } from './team/team.module';
     OpsModule,
     DashboardModule,
     TeamModule,
+    FinanceModule,
   ],
 })
 export class AppModule {}

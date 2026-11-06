@@ -152,6 +152,19 @@ export class OpsService {
     if (input.isGuest && (input.role === 'BIRTHDAY_PERSON' || input.role === 'ORGANIZER')) {
       throw new BadRequestException('Именинник и организатор должны быть с аккаунтом');
     }
+    if (!input.isGuest && !input.userId) throw new BadRequestException('Выберите игрока или «Гость»');
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId }, include: { participants: true } });
+    if (!booking) throw new NotFoundException('Бронь не найдена');
+    if (input.userId && booking.participants.some((p) => p.userId === input.userId)) {
+      throw new BadRequestException('Игрок уже в списке');
+    }
+    if ((input.role === 'BIRTHDAY_PERSON' || input.role === 'ORGANIZER') && booking.participants.some((p) => p.role === input.role)) {
+      throw new BadRequestException(input.role === 'BIRTHDAY_PERSON' ? 'Именинник уже выбран' : 'Организатор уже выбран');
+    }
+    if (input.isGuest && !input.displayName) {
+      const guests = booking.participants.filter((p) => p.isGuest).length;
+      input.displayName = `Гость ${guests + 1}`;
+    }
     return this.prisma.bookingParticipant.create({
       data: {
         bookingId,
@@ -163,12 +176,29 @@ export class OpsService {
     });
   }
 
-  async creditBooking(bookingId: string, actorId: string) {
+  async removeParticipant(bookingId: string, participantId: string) {
+    const row = await this.prisma.bookingParticipant.findUnique({ where: { id: participantId } });
+    if (!row || row.bookingId !== bookingId) throw new NotFoundException('Участник не найден');
+    if (row.creditedAt) throw new BadRequestException('Минуты уже начислены — убрать нельзя');
+    await this.prisma.bookingParticipant.delete({ where: { id: participantId } });
+    return { ok: true };
+  }
+
+  async creditBooking(bookingId: string, actorId: string, actorRole?: Role) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
       include: { participants: true },
     });
     if (!booking) throw new NotFoundException('Бронь не найдена');
+    if (booking.status === 'CANCELLED' || booking.status === 'NO_SHOW') {
+      throw new BadRequestException('Бронь отменена');
+    }
+    // Минуты — после оплаты: сначала «Принять доплату» в Кассе
+    if (booking.paidTenge < booking.amountTenge && actorRole !== Role.ADMIN) {
+      throw new BadRequestException(
+        `Бронь оплачена не полностью: остаток ${booking.amountTenge - booking.paidTenge} ₸. Примите доплату в Кассе`,
+      );
+    }
     const seconds = booking.packageMinutes * 60;
     if (seconds % 600 !== 0) throw new BadRequestException('Пакет должен быть кратен 10 минутам');
     const credited: string[] = [];
@@ -795,6 +825,91 @@ export class OpsService {
       data: { compensatedAt: session.compensatedAt ?? new Date() },
     });
     return { id: record.id, note, credited: users.map((u) => u.id), minutes: input.minutes };
+  }
+
+  /**
+   * Карточка игрока: баланс одной строкой и история — оплаты, сеансы, компенсации.
+   */
+  async playerCard(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) throw new NotFoundException('Игрок не найден');
+    const balance = await this.ledger.prepareBalance(userId);
+    const [sales, sessionLinks, compensations] = await Promise.all([
+      this.prisma.sale.findMany({
+        where: { OR: [{ userId }, { userIds: { has: userId } }] },
+        include: { lines: true, payments: true },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+      this.prisma.gameSessionPlayer.findMany({
+        where: { userId },
+        include: { session: { include: { room: { select: { name: true } }, mode: { select: { name: true } } } } },
+        orderBy: { session: { createdAt: 'desc' } },
+        take: 30,
+      }),
+      this.prisma.sessionCompensation.findMany({
+        where: { userIds: { has: userId } },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+    ]);
+    const sessionIds = sessionLinks.map((l) => l.sessionId);
+    const debits = sessionIds.length
+      ? await this.prisma.minuteEntry.groupBy({
+          by: ['sessionId'],
+          where: { userId, type: 'DEBIT', sessionId: { in: sessionIds } },
+          _sum: { seconds: true },
+        })
+      : [];
+    const spent = new Map(debits.map((d) => [d.sessionId, Math.floor((d._sum.seconds ?? 0) / 60)]));
+    const actorIds = [...new Set(compensations.map((c) => c.actorId))];
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true, nickname: true } })
+      : [];
+    const actorName = new Map(actors.map((a) => [a.id, a.name || a.nickname]));
+    const fmt = (d: Date | null) => (d ? new Date(d.getTime() + 5 * 3600000).toISOString().slice(11, 16) : null);
+    const balanceLine =
+      `${balance.paidMinutes} мин` +
+      (balance.paidMinutes && balance.paidExpiresAt ? ` (до ${fmt(balance.paidExpiresAt)})` : '') +
+      (balance.bonusMinutes ? ` + ${balance.bonusMinutes} бонусных` : '');
+    return {
+      balance: { ...balance, line: balanceLine },
+      payments: sales.map((s) => {
+        const players = s.userIds.length || 1;
+        return {
+          id: s.id,
+          number: s.number,
+          at: s.createdAt,
+          status: s.status,
+          totalTenge: s.totalTenge,
+          refundTenge: s.refundTenge,
+          isBarter: s.isBarter,
+          items: s.lines.map((l) => `${l.name}×${l.qty}`).join(', '),
+          methods: s.payments.map((p) => p.method),
+          minutes: Math.floor(s.minutesCredited / players),
+        };
+      }),
+      sessions: sessionLinks.map((l) => ({
+        id: l.sessionId,
+        at: l.session.startTime ?? l.session.createdAt,
+        room: l.session.room.name,
+        mode: l.session.mode.name,
+        outcome: sessionOutcome(l.session),
+        minutes: spent.get(l.sessionId) ?? 0,
+      })),
+      compensations: compensations.map((c) => ({
+        id: c.id,
+        at: c.createdAt,
+        minutes: c.minutes,
+        note: compensationNote({
+          minutes: c.minutes,
+          players: c.userIds.length,
+          actorName: actorName.get(c.actorId) ?? '—',
+          reason: c.reason,
+          comment: c.comment,
+        }),
+      })),
+    };
   }
 
   listCertificates(venueId?: string) {

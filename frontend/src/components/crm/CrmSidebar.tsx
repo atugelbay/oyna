@@ -24,7 +24,7 @@ const NAV_ITEMS = [
     href: "/tournaments",
     label: "События",
     icon: "/icons/navbar/tournaments.png",
-    match: ["/tournaments", "/promos", "/results"],
+    match: ["/month-tournament", "/tournaments", "/promos", "/results"],
   },
   {
     href: "/team",

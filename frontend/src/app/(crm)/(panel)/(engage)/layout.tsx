@@ -3,6 +3,7 @@
 import { SectionSwitch } from "@/components/crm/SectionSwitch";
 
 const ITEMS = [
+  { href: "/month-tournament", label: "Турнир месяца" },
   { href: "/tournaments", label: "Турниры" },
   { href: "/promos", label: "Акции" },
   { href: "/results", label: "Рейтинг" },
