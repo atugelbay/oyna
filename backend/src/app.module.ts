@@ -22,6 +22,7 @@ import { CashModule } from './cash/cash.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { OpsModule } from './ops/ops.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { TeamModule } from './team/team.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     LoyaltyModule,
     OpsModule,
     DashboardModule,
+    TeamModule,
   ],
 })
 export class AppModule {}

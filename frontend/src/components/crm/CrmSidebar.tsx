@@ -18,7 +18,7 @@ const NAV_ITEMS = [
     href: "/cash",
     label: "Касса",
     icon: "/icons/navbar/stats.png",
-    match: ["/cash", "/payments", "/finance", "/stats", "/certificates"],
+    match: ["/cash", "/payments", "/finance", "/stats", "/certificates", "/sources"],
   },
   {
     href: "/tournaments",
@@ -27,10 +27,10 @@ const NAV_ITEMS = [
     match: ["/tournaments", "/promos", "/results"],
   },
   {
-    href: "/schedule",
+    href: "/team",
     label: "Команда",
     icon: "/icons/navbar/players.png",
-    match: ["/schedule", "/operators", "/sources"],
+    match: ["/team", "/schedule", "/operators"],
   },
 ];
 

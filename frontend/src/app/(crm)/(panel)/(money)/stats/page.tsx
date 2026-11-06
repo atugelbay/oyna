@@ -5,6 +5,7 @@ import Link from "next/link";
 import { readApiUserError } from "@/lib/api-error-message";
 import { statsService } from "@/services/stats.service";
 import { useCrmVenue } from "@/lib/venue-context";
+import { SourcesReport } from "@/components/crm/SourcesReport";
 
 const CIRCLE_LENGTH = 2 * Math.PI * 40;
 
@@ -371,6 +372,7 @@ export default function StatsPage() {
           </div>
         </div>
       </div>
+      <SourcesReport />
     </div>
   );
 }

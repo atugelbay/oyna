@@ -3,6 +3,7 @@ import { CashMoveType, PayMethod, Prisma, Role, SaleStatus } from '@prisma/clien
 import { randomBytes, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { MinuteLedgerService } from '../ledger/minute-ledger.service';
+import { TeamService } from '../team/team.service';
 import { addDays } from '../domain/rules';
 import type {
   CancelSaleDto,
@@ -36,6 +37,7 @@ export class CashService {
   constructor(
     private prisma: PrismaService,
     private ledger: MinuteLedgerService,
+    private team: TeamService,
   ) {}
 
   async ensureWater(venueId?: string) {
@@ -83,7 +85,7 @@ export class CashService {
         openingNote: dto.openingNote,
       },
     });
-    await this.markArrival(operatorId, dto.venueId);
+    await this.team.markArrival(operatorId, dto.venueId);
     return shift;
   }
 
@@ -809,18 +811,49 @@ export class CashService {
     });
     const byOp = new Map<
       string,
-      { shifts: number; sales: number; cancelledSum: number; cash: number; kaspi: number; halyk: number; freedom: number; gaps: number; manualMinutes: number }
+      {
+        shifts: number;
+        sales: number;
+        cancelled: number;
+        cancelledSum: number;
+        unchecked: number;
+        cash: number;
+        kaspi: number;
+        halyk: number;
+        freedom: number;
+        gaps: number;
+        manualMinutes: number;
+        compensations: number;
+        compensationMinutes: number;
+      }
     >();
     const bucket = (id: string) => {
-      const row = byOp.get(id) ?? { shifts: 0, sales: 0, cancelledSum: 0, cash: 0, kaspi: 0, halyk: 0, freedom: 0, gaps: 0, manualMinutes: 0 };
+      const row = byOp.get(id) ?? {
+        shifts: 0,
+        sales: 0,
+        cancelled: 0,
+        cancelledSum: 0,
+        unchecked: 0,
+        cash: 0,
+        kaspi: 0,
+        halyk: 0,
+        freedom: 0,
+        gaps: 0,
+        manualMinutes: 0,
+        compensations: 0,
+        compensationMinutes: 0,
+      };
       byOp.set(id, row);
       return row;
     };
     for (const sale of sales) {
       const row = bucket(sale.operatorId);
-      if (sale.status === 'CANCELLED') row.cancelledSum += sale.totalTenge;
-      else {
+      if (sale.status === 'CANCELLED') {
+        row.cancelled += 1;
+        row.cancelledSum += sale.totalTenge;
+      } else {
         row.sales += 1;
+        if (!sale.isBarter && !sale.receiptChecked) row.unchecked += 1;
         for (const pay of sale.payments) {
           if (pay.method === 'CASH') row.cash += pay.amountTenge;
           if (pay.method === 'KASPI') row.kaspi += pay.amountTenge;
@@ -842,6 +875,15 @@ export class CashService {
         ];
         if (gaps.some((n) => n !== 0)) row.gaps += 1;
       }
+    }
+    const comps = await this.prisma.sessionCompensation.findMany({
+      where: createdAt ? { createdAt } : {},
+      select: { actorId: true, minutes: true, userIds: true },
+    });
+    for (const comp of comps) {
+      const row = bucket(comp.actorId);
+      row.compensations += 1;
+      row.compensationMinutes += comp.minutes * comp.userIds.length;
     }
     for (const manual of manuals) {
       if (!manual.createdById) continue;
@@ -904,16 +946,7 @@ export class CashService {
     return `Пополнение (sale, ${method}) ${minutes} мин. ${dto.comment ?? ''}`.trim();
   }
 
-  private async markArrival(userId: string, venueId: string) {
-    const now = new Date();
-    const row = await this.prisma.staffSchedule.findFirst({
-      where: { userId, venueId, startsAt: { lte: new Date(now.getTime() + 3 * 3600000) }, endsAt: { gte: new Date(now.getTime() - 3 * 3600000) }, arrivedAt: null },
-      orderBy: { startsAt: 'asc' },
-    });
-    if (row) {
-      await this.prisma.staffSchedule.update({ where: { id: row.id }, data: { arrivedAt: now } });
-    }
-  }
+
 }
 
 function maskPhone(phone: string | undefined, role: Role): string | null {

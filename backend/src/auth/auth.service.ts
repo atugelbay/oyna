@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamService } from '../team/team.service';
 import { RegisterDto, RequestOtpDto, VerifyOtpDto, RefreshDto } from './dto';
 import { normalizeKzPhone } from '../common/utils/phone.util';
 import * as bcrypt from 'bcrypt';
@@ -27,6 +28,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private rateLimit: RateLimitService,
+    private team: TeamService,
   ) {}
 
   async register(dto: RegisterDto, ip = 'unknown') {
@@ -194,6 +196,8 @@ export class AuthService {
     }
 
     await this.rateLimit.clearFailures(lockKey);
+    // Первый вход в CRM за смену — это «пришёл» в графике. Ошибка отметки не мешает входу.
+    await this.team.markArrival(user.id).catch(() => undefined);
     const tokens = await this.generateTokens(user.id, user.phone, user.role);
 
     return {

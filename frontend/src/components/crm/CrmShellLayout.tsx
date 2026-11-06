@@ -45,7 +45,7 @@ export function CrmShellLayout({ children }: { children: ReactNode }) {
             ["/cash", "Касса"],
             ["/players", "Игроки"],
             ["/tournaments", "События"],
-            ["/schedule", "Команда"],
+            ["/team", "Команда"],
           ].map(([href, label]) => (
             <a key={href} href={href} className="flex min-h-14 flex-1 items-center justify-center px-1 text-center text-[11px] text-white">
               {label}
