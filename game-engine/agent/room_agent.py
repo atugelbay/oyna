@@ -194,6 +194,95 @@ def room_json(
 
 _last_catalog_hash: str | None = None
 
+_room_events_sync_fail: dict[str, Any] = {"since": None, "last_detail": None}
+
+
+def _events_post_bytes(events: list[Any]) -> int:
+    return len(json.dumps({"events": events}, ensure_ascii=False).encode("utf-8"))
+
+
+def _describe_events_batch(events: list[Any]) -> None:
+    if not events:
+        return
+    total = _events_post_bytes(events)
+    ranked: list[tuple[int, str, str]] = []
+    for ev in events:
+        raw = json.dumps(ev, ensure_ascii=False).encode("utf-8")
+        if isinstance(ev, dict):
+            ranked.append(
+                (
+                    len(raw),
+                    str(ev.get("type") or "?"),
+                    str(ev.get("cursor") or ev.get("event_id") or "?"),
+                )
+            )
+        else:
+            ranked.append((len(raw), "?", "?"))
+    ranked.sort(reverse=True)
+    print(
+        f"room-events batch: count={len(events)}, "
+        f"POST body≈{total} bytes ({total / 1024:.1f} KiB)"
+    )
+    for nbytes, typ, ref in ranked[:10]:
+        print(f"  · {typ} ({ref}): {nbytes} bytes ({nbytes / 1024:.1f} KiB)")
+    if len(ranked) > 10:
+        print(f"  … ещё {len(ranked) - 10} событий")
+
+
+def crm_ingest_room_events(
+    room_id: str, station_key: str, events: list[Any]
+) -> bool:
+    """Отправка журнала в CRM небольшими пачками; при 413 делит пачку пополам."""
+    default_batch = max(1, int(os.environ.get("EVENTS_CRM_BATCH_SIZE", "20")))
+    pending = list(events)
+    while pending:
+        batch_size = min(default_batch, len(pending))
+        while True:
+            chunk = pending[:batch_size]
+            try:
+                res = crm_json(
+                    "POST",
+                    f"/station/rooms/{room_id}/room-events",
+                    station_key,
+                    {"events": chunk},
+                    timeout=60,
+                )
+                print(f"CRM room-events ({len(chunk)}):", res)
+                pending = pending[batch_size:]
+                break
+            except urllib.error.HTTPError as exc:
+                err_body = exc.read().decode("utf-8", errors="replace")[:500]
+                if exc.code == 413:
+                    _describe_events_batch(chunk)
+                    if batch_size > 1:
+                        batch_size = max(1, batch_size // 2)
+                        continue
+                    _room_events_sync_fail["since"] = (
+                        _room_events_sync_fail["since"] or time.time()
+                    )
+                    _room_events_sync_fail["last_detail"] = (
+                        "413: одно событие больше лимита CRM"
+                    )
+                    print("CRM room-events error:", exc.code, err_body)
+                    return False
+                _room_events_sync_fail["since"] = (
+                    _room_events_sync_fail["since"] or time.time()
+                )
+                _room_events_sync_fail["last_detail"] = f"HTTP {exc.code}: {err_body[:180]}"
+                print("CRM room-events error:", exc.code, err_body)
+                return False
+            except Exception as exc:
+                _room_events_sync_fail["since"] = (
+                    _room_events_sync_fail["since"] or time.time()
+                )
+                _room_events_sync_fail["last_detail"] = str(exc)[:180]
+                print("CRM room-events error:", exc)
+                return False
+
+    _room_events_sync_fail["since"] = None
+    _room_events_sync_fail["last_detail"] = None
+    return True
+
 
 def sync_catalog(force: bool = False, catalog_hash: str | None = None) -> None:
     """Выгрузить GET /v1/catalog в CRM (режимы для UI)."""
@@ -250,6 +339,7 @@ def events_loop() -> None:
     station_key = env("STATION_API_KEY")
     room_key = env("ROOM_API_KEY", "dev")
     wait = float(os.environ.get("EVENTS_WAIT_SEC", "20"))
+    fetch_limit = max(1, int(os.environ.get("EVENTS_FETCH_LIMIT", "50")))
     after: int | None = None
 
     # Стартовый курсор из health
@@ -266,7 +356,11 @@ def events_loop() -> None:
     while True:
         try:
             qs = urllib.parse.urlencode(
-                {"after": after if after is not None else 0, "limit": 100, "wait": wait}
+                {
+                    "after": after if after is not None else 0,
+                    "limit": fetch_limit,
+                    "wait": wait,
+                }
             )
             page = room_json("GET", f"/events?{qs}", room_key, timeout=wait + 10)
         except urllib.error.HTTPError as exc:
@@ -290,24 +384,7 @@ def events_loop() -> None:
                     if isinstance(ch, str) and ch:
                         sync_catalog(catalog_hash=ch)
 
-            try:
-                res = crm_json(
-                    "POST",
-                    f"/station/rooms/{room_id}/room-events",
-                    station_key,
-                    {"events": events},
-                )
-                print(f"CRM room-events ({len(events)}):", res)
-            except urllib.error.HTTPError as exc:
-                print(
-                    "CRM room-events error:",
-                    exc.code,
-                    exc.read().decode("utf-8", errors="replace")[:500],
-                )
-                time.sleep(2)
-                continue
-            except Exception as exc:
-                print("CRM room-events error:", exc)
+            if not crm_ingest_room_events(room_id, station_key, events):
                 time.sleep(2)
                 continue
 
@@ -418,15 +495,26 @@ def heartbeat_loop() -> None:
         except Exception:
             pass
 
+        hb: dict[str, Any] = {
+            "buildVersion": build,
+            "uptimeSeconds": int(time.time() - started),
+        }
+        fail_since = _room_events_sync_fail.get("since")
+        if isinstance(fail_since, (int, float)):
+            elapsed = time.time() - float(fail_since)
+            if elapsed >= 300:
+                detail = str(
+                    _room_events_sync_fail.get("last_detail")
+                    or "room-events не уходят в CRM"
+                )
+                hb["roomEventsIngestError"] = f"{detail} ({int(elapsed)}s)"
+
         try:
             crm_json(
                 "POST",
                 f"/station/rooms/{room_id}/heartbeat",
                 station_key,
-                {
-                    "buildVersion": build,
-                    "uptimeSeconds": int(time.time() - started),
-                },
+                hb,
             )
         except Exception as exc:
             print("CRM heartbeat error:", exc)

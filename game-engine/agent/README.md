@@ -63,6 +63,8 @@ python -m Tools.RoomAPI.mock_room --room lasers --port 8080 --key dev
 | `ROOM_API_BASE` | `http://127.0.0.1:8080/v1` |
 | `ROOM_API_KEY` | `dev` (или ключ из `room_api.json`) |
 | `EVENTS_WAIT_SEC` | `20` |
+| `EVENTS_FETCH_LIMIT` | `50` (сколько событий за раз с `GET /v1/events`) |
+| `EVENTS_CRM_BATCH_SIZE` | `20` (пачка в CRM; при 413 делится пополам) |
 | `POLL_INTERVAL_SEC` | `2` |
 | `CRM_SSL_VERIFY` | `1` (по умолчанию). `0` — не проверять HTTPS-серт CRM (только отладка) |
 
@@ -84,6 +86,15 @@ python -c "import certifi,ssl,urllib.request; ctx=ssl.create_default_context(caf
 ```powershell
 $env:CRM_SSL_VERIFY = "0"
 ```
+
+## Диагностика 413 (журнал не чистить)
+
+```powershell
+cd game-engine\agent
+python analyze_pending_room_events.py
+```
+
+Покажет размер очереди и самые тяжёлые события по `type` / `cursor`.
 
 ## Замечания
 

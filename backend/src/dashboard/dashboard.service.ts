@@ -120,7 +120,12 @@ export class DashboardService {
 
   private async important(venueId: string, day: { from: Date; to: Date }, now: Date) {
     const p = almatyParts(now);
-    const [birthdays, expiring, offlineRooms, lowStock, leader] = await Promise.all([
+    const venueRooms = await this.prisma.room.findMany({
+      where: { venueId },
+      select: { id: true, name: true },
+    });
+    const roomIds = venueRooms.map((r) => r.id);
+    const [birthdays, expiring, offlineRooms, lowStock, leader, eventSyncFails] = await Promise.all([
       this.prisma.$queryRaw<{ id: string; nickname: string; birthDate: Date }[]>`
         SELECT u.id, u.nickname, u."birthDate"
         FROM "users" u
@@ -151,6 +156,17 @@ export class DashboardService {
         .board({ period: 'month', venueId, limit: 1 })
         .then((b) => b.items[0] ?? null)
         .catch(() => null),
+      roomIds.length
+        ? this.prisma.auditLog.findMany({
+            where: {
+              action: 'ROOM_EVENTS_SYNC_FAIL',
+              entityId: { in: roomIds },
+              createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60_000) },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+          })
+        : Promise.resolve([]),
     ]);
 
     const expiringUsers = expiring.length
@@ -160,6 +176,24 @@ export class DashboardService {
         })
       : [];
     const nick = new Map(expiringUsers.map((u) => [u.id, u]));
+    const roomName = new Map(venueRooms.map((r) => [r.id, r.name]));
+    const seenSync = new Set<string>();
+    const roomEventsSyncFails: {
+      roomId: string;
+      name: string;
+      detail: string;
+      minutes: number;
+    }[] = [];
+    for (const row of eventSyncFails) {
+      if (!row.entityId || seenSync.has(row.entityId)) continue;
+      seenSync.add(row.entityId);
+      roomEventsSyncFails.push({
+        roomId: row.entityId,
+        name: roomName.get(row.entityId) ?? 'Комната',
+        detail: row.detail ?? '',
+        minutes: Math.max(0, Math.floor((now.getTime() - row.createdAt.getTime()) / 60_000)),
+      });
+    }
 
     return {
       birthdays: birthdays.map((b) => ({
@@ -182,6 +216,7 @@ export class DashboardService {
         .map((r) => ({ roomId: r.id, name: r.name, minutes: offlineAlertMinutes(r.lastHeartbeatAt, now) }))
         .filter((r): r is { roomId: string; name: string; minutes: number } => r.minutes != null),
       lowStock: lowStock.filter((i) => i.stockQty <= i.lowStockAt),
+      roomEventsSyncFails,
       tournament: {
         daysLeft: daysLeftInMonth(now),
         leader: leader ? { nickname: leader.nick, points: leader.points } : null,

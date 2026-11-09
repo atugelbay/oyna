@@ -17,4 +17,10 @@ export class StationHeartbeatDto {
   @IsOptional()
   @IsUUID('loose')
   currentSessionId?: string;
+
+  /** Агент не может ingестить журнал Room API (413 и т.п.) дольше порога — для алерта владельцу */
+  @ApiPropertyOptional({ example: 'room-events 413: request entity too large (5+ min)' })
+  @IsOptional()
+  @IsString()
+  roomEventsIngestError?: string;
 }

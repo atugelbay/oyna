@@ -52,6 +52,7 @@ type Today = {
     birthdays: { userId: string; nickname: string; age: number }[];
     expiringMinutes: { userId: string; nickname: string; phone: string; minutes: number; expiresAt: string }[];
     offlineRooms: { roomId: string; name: string; minutes: number }[];
+    roomEventsSyncFails: { roomId: string; name: string; detail: string; minutes: number }[];
     lowStock: { id: string; name: string; stockQty: number; lowStockAt: number }[];
     tournament: { daysLeft: number; leader: { nickname: string; points: number } | null };
   };
@@ -191,6 +192,7 @@ export default function DashboardPage() {
     important.birthdays.length > 0 ||
     important.expiringMinutes.length > 0 ||
     important.offlineRooms.length > 0 ||
+    important.roomEventsSyncFails.length > 0 ||
     important.lowStock.length > 0 ||
     important.tournament.leader != null;
 
@@ -353,6 +355,14 @@ export default function DashboardPage() {
                 {important.offlineRooms.map((r) => (
                   <li key={r.roomId} className={`${row} text-danger`}>
                     {r.name}: нет связи {r.minutes} мин
+                  </li>
+                ))}
+                {important.roomEventsSyncFails.map((r) => (
+                  <li key={r.roomId} className={`${row} text-danger`}>
+                    {r.name}: журнал игры не уходит в CRM {r.minutes > 0 ? `${r.minutes} мин` : "сейчас"}
+                    {r.detail ? (
+                      <span className="mt-1 block text-xs text-text-secondary">{r.detail}</span>
+                    ) : null}
                   </li>
                 ))}
                 {important.birthdays.length > 0 ? (

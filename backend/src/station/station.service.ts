@@ -43,6 +43,27 @@ export class StationService {
         heartbeatBuildVersion: true,
       },
     });
+    if (dto.roomEventsIngestError?.trim()) {
+      const since = new Date(Date.now() - 30 * 60_000);
+      const recent = await this.prisma.auditLog.findFirst({
+        where: {
+          action: 'ROOM_EVENTS_SYNC_FAIL',
+          entity: 'room',
+          entityId: roomId,
+          createdAt: { gte: since },
+        },
+      });
+      if (!recent) {
+        await this.prisma.auditLog.create({
+          data: {
+            action: 'ROOM_EVENTS_SYNC_FAIL',
+            entity: 'room',
+            entityId: roomId,
+            detail: dto.roomEventsIngestError.trim().slice(0, 2000),
+          },
+        });
+      }
+    }
     // Тихо продлеваем QR, если скоро истечёт (без PUBLIC_URL — no-op).
     await this.lobbyQr.refreshIfNeeded(roomId, 'heartbeat');
     return row;
